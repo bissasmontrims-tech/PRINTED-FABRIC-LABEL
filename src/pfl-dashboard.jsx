@@ -766,7 +766,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
           });
           processImportedRows(objs);
         } else {
-          const wb = XLSX.read(ev.target.result, { type: "array", cellDates: true });
+          const wb = XLSX.read(ev.target.result, { type: "array", cellDates: false });
           const ws = wb.Sheets[wb.SheetNames[0]];
           const objs = XLSX.utils.sheet_to_json(ws, { defval: "" });
           processImportedRows(objs);
