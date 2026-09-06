@@ -645,22 +645,20 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   // the preview the user reviews before clicking "Submit to Database".
   function processImportedRows(objs) {
     let invalid = 0, withinBatchDupes = 0, emptyOperator = 0, invalidDate = 0;
-    const seen = new Set();
     const clean = [];
     for (const o of objs) {
       const row = normalizeRow(o);
       if (!row.operator) { emptyOperator++; invalid++; continue; }
       if (!row.date) { invalidDate++; invalid++; continue; } // row.date is a validated "YYYY-MM-DD" string or null
       if (isNaN(row.pcs) || isNaN(row.usd)) { invalid++; continue; }
-      const sig = `${row.date}|${row.operator}|${row.jobNumber}|${row.machine}|${row.shift}`;
-      if (seen.has(sig)) { withinBatchDupes++; continue; }
-      seen.add(sig);
+      // IMPORTANT: never skip duplicate-looking rows. Every valid Excel row
+      // must be preserved exactly as submitted.
       clean.push(row);
     }
     setPreviewRows(clean);
     setImportSummary({
       stage: "preview",
-      total: objs.length, valid: clean.length, invalid, withinBatchDupes, emptyOperator, invalidDate,
+      total: objs.length, valid: clean.length, invalid, withinBatchDupes: 0, emptyOperator, invalidDate,
     });
   }
 
@@ -686,10 +684,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     const payload = previewRows.map((r) => recordToDbRow(r, session?.user?.id));
     const { data, error } = await supabase
       .from("production_data")
-      .upsert(payload, {
-        onConflict: "report_date,job_number,machine_no,operator_name,shift",
-        ignoreDuplicates: true,
-      })
+      .insert(payload)
       .select();
     setSubmitting(false);
 
@@ -698,8 +693,8 @@ export default function PFLDashboard({ session, profile, onLogout }) {
       return;
     }
 
-    const inserted = data.length;
-    const dupesSkipped = payload.length - inserted;
+    const inserted = data?.length || payload.length;
+    const dupesSkipped = 0;
     const reportDates = uniqSorted(previewRows.map((r) => r.date));
     const label = reportDates.length === 1 ? `${formatDisplayDate(reportDates[0])} report` : `${reportDates.length} dates`;
 
@@ -707,7 +702,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
       stage: "done",
       total: payload.length,
       valid: inserted,
-      dupes: dupesSkipped,
+      dupes: 0,
       message: dupesSkipped > 0 && inserted === 0
         ? "Duplicate data detected. Existing data was not duplicated."
         : `${label} successfully saved to database.`,
@@ -766,9 +761,9 @@ export default function PFLDashboard({ session, profile, onLogout }) {
           });
           processImportedRows(objs);
         } else {
-          const wb = XLSX.read(ev.target.result, { type: "array", cellDates: false });
+          const wb = XLSX.read(ev.target.result, { type: "array", cellDates: false, cellNF: true });
           const ws = wb.Sheets[wb.SheetNames[0]];
-          const objs = XLSX.utils.sheet_to_json(ws, { defval: "" });
+          const objs = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
           processImportedRows(objs);
         }
       } catch (err) {
