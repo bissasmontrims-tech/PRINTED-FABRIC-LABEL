@@ -8,7 +8,7 @@ import {
   LayoutGrid, Calendar, Users, Cog, Sun, ShoppingBag, Building2, Search,
   Table2, Upload, Settings as SettingsIcon, AlertTriangle, CheckCircle2,
   TrendingUp, TrendingDown, ChevronDown, ChevronUp, X, RotateCcw, Download,
-  ArrowUpDown, User, LogOut, ShieldCheck, UserCog
+  ArrowUpDown, User, LogOut, ShieldCheck, UserCog, ClipboardList
 } from "lucide-react";
 import { supabase, supabaseReady } from "./lib/supabaseClient";
 import {
@@ -27,6 +27,7 @@ const RAW_DATA = [{"date":"2026-09-01","mcType":"Flexo","jobType":"3 color","shi
 const NAV = [
   { key: "overview", label: "Overview", icon: LayoutGrid },
   { key: "daily", label: "Daily / Monthly / Yearly", icon: Calendar },
+  { key: "dailyplan", label: "Daily Plan", icon: ClipboardList },
   { key: "operators", label: "Operator Performance", icon: Users },
   { key: "machines", label: "Machine Performance", icon: Cog },
   { key: "mctype", label: "MC Type Performance", icon: Cog },
@@ -42,6 +43,9 @@ const NAV = [
 ];
 
 const COLORS = ["#2563eb", "#0891b2", "#7c3aed", "#d97706", "#059669", "#dc2626", "#4f46e5", "#0d9488"];
+// The five supervisors who submit a Daily Plan — matches the `supervisor_name`
+// check constraint in supabase/daily_plan.sql. Add a name in both places to extend.
+const SUPERVISORS = ["Aslam", "Murad", "Biplob", "Selim Reza", "Shahjahan"];
 const INK = "#1e293b";
 const MUTE = "#64748b";
 const LINE = "#e2e8f0";
@@ -350,6 +354,49 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   }, []);
 
   useEffect(() => { fetchFromDatabase(); }, [fetchFromDatabase]);
+
+  /* ---------- Daily Plan (Aslam/Murad/Biplob/Selim Reza/Shahjahan) ---------- */
+  const [dailyPlans, setDailyPlans] = useState([]); // raw rows: {id, plan_date, supervisor_name, planned_usd}
+  const [planLoading, setPlanLoading] = useState(supabaseReady);
+  const [planError, setPlanError] = useState("");
+  const [planSaving, setPlanSaving] = useState(false);
+  const [planSavedMsg, setPlanSavedMsg] = useState("");
+
+  const fetchDailyPlans = useCallback(async () => {
+    if (!supabaseReady) return;
+    setPlanLoading(true);
+    setPlanError("");
+    const { data, error } = await supabase.from("daily_plans").select("*").order("plan_date", { ascending: false });
+    if (error) { setPlanError(`Failed to load daily plans: ${error.message}`); setPlanLoading(false); return; }
+    setDailyPlans(data);
+    setPlanLoading(false);
+  }, []);
+
+  useEffect(() => { fetchDailyPlans(); }, [fetchDailyPlans]);
+
+  async function submitDailyPlan(planDate, values) {
+    // `values` is { Aslam: 1200, Murad: 900, ... } — only supervisors with a
+    // non-empty value are saved. Upsert on (plan_date, supervisor_name) means
+    // re-submitting the same date just updates each supervisor's number.
+    if (!supabaseReady) { setPlanError("Supabase is not configured — Daily Plan cannot be saved."); return; }
+    const rows = SUPERVISORS
+      .filter((name) => values[name] !== "" && values[name] !== null && values[name] !== undefined)
+      .map((name) => ({
+        plan_date: planDate,
+        supervisor_name: name,
+        planned_usd: Number(values[name]) || 0,
+        created_by: session?.user?.id || null,
+      }));
+    if (!rows.length) return;
+    setPlanSaving(true);
+    setPlanError("");
+    setPlanSavedMsg("");
+    const { error } = await supabase.from("daily_plans").upsert(rows, { onConflict: "plan_date,supervisor_name" });
+    setPlanSaving(false);
+    if (error) { setPlanError(`Database insert failed: ${error.message}`); return; }
+    setPlanSavedMsg(`Daily Plan for ${formatDisplayDate(planDate)} saved successfully.`);
+    await fetchDailyPlans();
+  }
 
   const allDates = useMemo(() => uniqSorted(rawData.map((r) => r.date)), [rawData]);
   const latestDate = allDates[allDates.length - 1] || null;
@@ -835,6 +882,12 @@ export default function PFLDashboard({ session, profile, onLogout }) {
           {page === "daily" && (
             <DailyPage dailySeries={dailySeries} monthlySeries={monthlySeries} yearlySeries={yearlySeries} operatorRows={operatorRows} settings={settings} />
           )}
+          {page === "dailyplan" && (
+            <DailyPlanPage dailyPlans={dailyPlans} latestDate={latestDate} allDates={allDates}
+              onSubmit={submitDailyPlan} loading={planLoading} saving={planSaving}
+              error={planError} savedMsg={planSavedMsg} canEdit={can(profile, "import_data")}
+              currency={settings.currency} />
+          )}
           {page === "operators" && (
             <OperatorsPage operatorRows={operatorRows} settings={settings} options={options}
               selectedOperator={selectedOperator} setSelectedOperator={setSelectedOperator}
@@ -1028,6 +1081,103 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
           { key: "achievement", label: "Achv %", render: (r) => fmtPct(r.achievement) },
           { key: "status", label: "Status", render: (r) => <StatusBadge status={r.status} /> },
         ]} rows={operatorRows} initialSort={{ key: "rank", dir: "asc" }} />
+      </Card>
+    </div>
+  );
+}
+
+/* ============================== PAGE: DAILY PLAN ============================== */
+function DailyPlanPage({ dailyPlans, latestDate, allDates, onSubmit, loading, saving, error, savedMsg, canEdit, currency }) {
+  const [planDate, setPlanDate] = useState(latestDate || "");
+  // Keep the date field populated once data loads, without overwriting a date the user already picked.
+  useEffect(() => { if (!planDate && latestDate) setPlanDate(latestDate); }, [latestDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const plansForDate = useMemo(
+    () => dailyPlans.filter((p) => p.plan_date === planDate),
+    [dailyPlans, planDate]
+  );
+  const existing = useMemo(() => {
+    const m = {};
+    plansForDate.forEach((p) => { m[p.supervisor_name] = p.planned_usd; });
+    return m;
+  }, [plansForDate]);
+
+  const [values, setValues] = useState({});
+  useEffect(() => {
+    const next = {};
+    SUPERVISORS.forEach((name) => { next[name] = existing[name] ?? ""; });
+    setValues(next);
+  }, [planDate, dailyPlans]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const liveTotal = SUPERVISORS.reduce((s, name) => s + (Number(values[name]) || 0), 0);
+  const savedTotal = plansForDate.reduce((s, p) => s + (Number(p.planned_usd) || 0), 0);
+
+  return (
+    <div className="flex flex-col gap-5 max-w-2xl">
+      <Card>
+        <SectionTitle>Daily Plan</SectionTitle>
+        <p className="text-sm text-slate-500 mb-4">Each supervisor's planned USD for the day. Submitted plans are saved date-wise in Supabase and summed automatically into the Daily Plan Total below.</p>
+
+        <div className="flex flex-col gap-1 mb-4 max-w-xs">
+          <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Date</label>
+          <input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)}
+            className="text-sm border border-slate-300 rounded-lg px-3 py-2" />
+        </div>
+
+        {!canEdit && (
+          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+            You have read-only access — only Admin or Manager accounts can submit a Daily Plan.
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2">
+          {SUPERVISORS.map((name) => (
+            <div key={name} className="flex items-center justify-between gap-3 border-b border-slate-100 py-2">
+              <span className="text-sm text-slate-700">{name}</span>
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-slate-400">$</span>
+                <input type="number" min="0" step="1" disabled={!canEdit || !planDate}
+                  value={values[name] ?? ""}
+                  onChange={(e) => setValues((v) => ({ ...v, [name]: e.target.value }))}
+                  placeholder="0"
+                  className="w-32 text-sm border border-slate-200 rounded-lg px-2 py-1.5 text-right disabled:bg-slate-50 disabled:text-slate-400" />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-200">
+          <span className="text-sm font-semibold text-slate-700">Daily Plan Total</span>
+          <span className="text-xl font-bold text-blue-600">{fmtUsd(liveTotal, currency)}</span>
+        </div>
+
+        {error && <div className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mt-3">{error}</div>}
+        {savedMsg && <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mt-3">{savedMsg}</div>}
+
+        {canEdit && (
+          <button onClick={() => onSubmit(planDate, values)} disabled={saving || !planDate}
+            className="mt-4 w-full bg-blue-600 text-white text-sm font-semibold py-2.5 rounded-xl hover:bg-blue-700 transition disabled:opacity-50">
+            {saving ? "Saving..." : "Save Daily Plan"}
+          </button>
+        )}
+      </Card>
+
+      <Card>
+        <SectionTitle>Submitted Plans — {fmtDate(planDate)}</SectionTitle>
+        {loading ? (
+          <div className="text-sm text-slate-400">Loading…</div>
+        ) : plansForDate.length ? (
+          <>
+            <DataTable pageSize={5} columns={[
+              { key: "supervisor_name", label: "Supervisor" },
+              { key: "planned_usd", label: "Planned USD", render: (r) => fmtUsd(r.planned_usd, currency) },
+            ]} rows={plansForDate} initialSort={{ key: "supervisor_name", dir: "asc" }} />
+            <div className="flex items-center justify-between mt-3 pt-3 border-t border-slate-200">
+              <span className="text-sm font-semibold text-slate-700">Total (saved)</span>
+              <span className="text-lg font-bold text-slate-900">{fmtUsd(savedTotal, currency)}</span>
+            </div>
+          </>
+        ) : <EmptyState text="No plan submitted for this date yet" />}
       </Card>
     </div>
   );

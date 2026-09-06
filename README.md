@@ -172,6 +172,18 @@ console) via `_runDateParserSelfTest()` in `src/lib/dateUtils.js`. Covers:
 8. Filter Month = September 2026 → both dates appear.
 9. Re-upload the exact same `03/09/2026` file → import summary reports duplicates skipped, not new rows.
 
+## Daily Plan (Aslam / Murad / Biplob / Selim Reza / Shahjahan)
+
+A dedicated **Daily Plan** page (sidebar) lets Admin/Manager accounts enter
+each supervisor's planned USD for a chosen date. Submitting upserts into the
+new `daily_plans` table (see `supabase/daily_plan.sql` — run it once in the
+SQL Editor, after `schema.sql`), keyed on `(plan_date, supervisor_name)`, so
+resubmitting the same date updates each supervisor's number instead of
+duplicating rows. The **Daily Plan Total** is not stored separately — it's
+always the live sum of whatever plans exist for that date, so it can never
+drift out of sync. Read access follows the same role rules as production
+data (Operators see it read-only); write access is Admin/Manager only.
+
 ## Notes
 
 - The dashboard's existing calculations, filters, tables, charts, and layout
