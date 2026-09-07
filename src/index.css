@@ -9,3 +9,84 @@ html, body, #root {
 body {
   margin: 0;
 }
+
+/* Unique animated login experience */
+.login-page {
+  min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background:
+    radial-gradient(circle at 50% 32%, rgba(44, 181, 126, .18), transparent 24%),
+    linear-gradient(145deg, #06121b 0%, #092b2a 48%, #101a36 100%);
+}
+.login-stars {
+  position: absolute;
+  inset: 0;
+  opacity: .45;
+  background-image: radial-gradient(circle, rgba(255,255,255,.75) 1px, transparent 1.5px);
+  background-size: 74px 74px;
+  mask-image: linear-gradient(to bottom, black, transparent 80%);
+}
+.login-orb { position:absolute; border-radius:999px; filter:blur(3px); pointer-events:none; }
+.orb-one { width:360px; height:360px; top:-170px; left:-120px; background:rgba(50,211,153,.13); }
+.orb-two { width:430px; height:430px; bottom:-220px; right:-150px; background:rgba(99,102,241,.16); }
+.login-tree-scene {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(460px, 86vw);
+  height: 370px;
+  transform: translate(-50%, -67%);
+  pointer-events: none;
+  z-index: 2;
+}
+.tree-svg { width:100%; height:100%; overflow:visible; transform-origin:50% 100%; transform:scale(.05); opacity:0; }
+.login-tree-scene.is-grown .tree-svg { animation: treeGrow 1.9s cubic-bezier(.2,.85,.2,1) forwards; }
+.tree-shadow { fill:rgba(0,0,0,.3); filter:url(#treeShadow); opacity:.75; }
+.tree-trunk { transform-origin:210px 292px; transform:scaleY(0); }
+.login-tree-scene.is-grown .tree-trunk { animation: trunkGrow 1.2s .25s ease-out forwards; }
+.tree-crown { transform-origin:210px 145px; transform:scale(.05); opacity:0; }
+.login-tree-scene.is-grown .tree-crown { animation: crownGrow 1.15s 1.0s cubic-bezier(.2,.8,.2,1) forwards; }
+.tree-highlights { opacity:0; }
+.login-tree-scene.is-grown .tree-highlights { animation: fadeTree 1s 1.55s ease-out forwards; }
+.tree-glow { position:absolute; width:230px; height:150px; left:50%; top:45%; transform:translate(-50%,-50%); border-radius:50%; background:rgba(52,211,153,.12); filter:blur(34px); opacity:0; }
+.login-tree-scene.is-grown .tree-glow { animation: glowIn 1.5s 1.2s ease forwards; }
+.tree-ground { position:absolute; bottom:22px; left:50%; width:210px; height:30px; transform:translateX(-50%); border-radius:50%; background:rgba(0,0,0,.28); filter:blur(8px); opacity:0; }
+.login-tree-scene.is-grown .tree-ground { animation: fadeTree .8s .9s ease forwards; }
+.tree-caption { position:absolute; bottom:-2px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:6px; color:rgba(220,252,231,.7); font-size:11px; letter-spacing:.08em; text-transform:uppercase; opacity:0; white-space:nowrap; }
+.login-tree-scene.is-grown .tree-caption { animation: fadeTree .8s 1.8s ease forwards; }
+.login-card {
+  position:relative;
+  z-index:5;
+  width:min(410px, 94vw);
+  margin-top:260px;
+  padding:30px;
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:28px;
+  background:rgba(255,255,255,.94);
+  box-shadow:0 30px 90px rgba(0,0,0,.38), 0 0 0 1px rgba(255,255,255,.06);
+  backdrop-filter:blur(18px);
+  animation: loginCardIn .95s 2.0s cubic-bezier(.2,.85,.2,1) both;
+}
+.login-brand-mark { width:42px; height:42px; display:grid; place-items:center; margin:0 auto 14px; color:#fff; border-radius:14px; background:linear-gradient(135deg,#16a34a,#0f766e); box-shadow:0 10px 24px rgba(16,185,129,.28); }
+.login-title { color:#0f172a; font-size:25px; line-height:1.1; font-weight:800; letter-spacing:-.03em; }
+.login-subtitle { color:#64748b; font-size:12px; margin-top:7px; }
+.login-label { color:#334155; font-size:12px; font-weight:700; }
+.login-input { width:100%; box-sizing:border-box; border:1px solid #dbe3ea; border-radius:13px; background:#f8fafc; padding:12px 13px; font-size:14px; color:#0f172a; outline:none; transition:.2s ease; }
+.login-input:focus { background:#fff; border-color:#34d399; box-shadow:0 0 0 4px rgba(52,211,153,.12); }
+.login-button { width:100%; display:flex; align-items:center; justify-content:center; gap:8px; border:0; border-radius:14px; padding:13px 16px; color:#fff; background:linear-gradient(135deg,#0f766e,#16a34a); font-size:14px; font-weight:800; box-shadow:0 12px 25px rgba(15,118,110,.24); cursor:pointer; transition:.2s ease; }
+.login-button:hover:not(:disabled) { transform:translateY(-1px); box-shadow:0 16px 30px rgba(15,118,110,.3); }
+.login-button:disabled { opacity:.5; cursor:not-allowed; }
+.login-footer { text-align:center; color:#94a3b8; font-size:10px; margin-top:18px; letter-spacing:.04em; }
+@keyframes treeGrow { 0%{transform:scale(.05);opacity:0} 45%{opacity:1} 100%{transform:scale(1);opacity:1} }
+@keyframes trunkGrow { to { transform:scaleY(1); } }
+@keyframes crownGrow { 0%{transform:scale(.05);opacity:0} 70%{opacity:1} 100%{transform:scale(1);opacity:1} }
+@keyframes fadeTree { to { opacity:1; } }
+@keyframes glowIn { to { opacity:1; } }
+@keyframes loginCardIn { from{opacity:0; transform:translateY(32px) scale(.94)} to{opacity:1; transform:translateY(0) scale(1)} }
+@media (max-height:720px) { .login-tree-scene { transform:translate(-50%,-72%) scale(.78); } .login-card { margin-top:190px; padding:22px; } }
+@media (prefers-reduced-motion: reduce) { .login-tree-scene.is-grown .tree-svg,.login-tree-scene.is-grown .tree-trunk,.login-tree-scene.is-grown .tree-crown,.login-tree-scene.is-grown .tree-highlights,.login-tree-scene.is-grown .tree-glow,.login-tree-scene.is-grown .tree-ground,.login-tree-scene.is-grown .tree-caption,.login-card { animation:none; opacity:1; transform:none; } }
