@@ -340,20 +340,49 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     if (!supabaseReady) return;
     setDataLoading(true);
     setDataError("");
-    const { data, error } = await supabase
-      .from("production_data")
-      .select("*")
-      .order("report_date", { ascending: true });
-    if (error) {
-      setDataError(`Failed to load data from database: ${error.message}`);
-      setDataLoading(false);
-      return;
+
+    // Supabase REST normally returns at most 1000 rows per request.
+    // Fetch every page so the dashboard always includes ALL historical data
+    // (today, tomorrow, next month, etc.) without any code update.
+    const PAGE_SIZE = 1000;
+    const allRows = [];
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await supabase
+        .from("production_data")
+        .select("*")
+        .order("report_date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+
+      if (error) {
+        setDataError(`Failed to load data from database: ${error.message}`);
+        setDataLoading(false);
+        return;
+      }
+
+      const rows = data || [];
+      allRows.push(...rows);
+      if (rows.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
     }
-    setRawData(data.map(dbRowToRecord));
+
+    setRawData(allRows.map(dbRowToRecord));
     setDataLoading(false);
   }, []);
 
-  useEffect(() => { fetchFromDatabase(); }, [fetchFromDatabase]);
+  useEffect(() => {
+    fetchFromDatabase();
+
+    // Keep the dashboard current automatically. New rows added to Supabase
+    // will appear without changing/redeploying the code.
+    const refreshTimer = setInterval(() => {
+      fetchFromDatabase();
+    }, 30000);
+
+    return () => clearInterval(refreshTimer);
+  }, [fetchFromDatabase]);
 
   /* ---------- Daily Plan (Aslam/Murad/Biplob/Selim Reza/Shahjahan) ---------- */
   const [dailyPlans, setDailyPlans] = useState([]); // raw rows: {id, plan_date, supervisor_name, planned_usd}
