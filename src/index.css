@@ -36,34 +36,42 @@ body {
 .orb-two { width:430px; height:430px; bottom:-220px; right:-150px; background:rgba(99,102,241,.16); }
 .login-tree-scene {
   position: absolute;
-  left: 50%;
-  top: 50%;
-  width: min(460px, 86vw);
-  height: 370px;
-  transform: translate(-50%, -67%);
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
   pointer-events: none;
   z-index: 2;
+  overflow: hidden;
 }
-.tree-svg { width:100%; height:100%; overflow:visible; transform-origin:50% 100%; transform:scale(.05); opacity:0; }
-.login-tree-scene.is-grown .tree-svg { animation: treeGrow 1.9s cubic-bezier(.2,.85,.2,1) forwards; }
+.tree-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform-origin: 50% 100%;
+  transform: scale(.035);
+  opacity: 0;
+}
+.login-tree-scene.is-grown .tree-svg { animation: treeGrow 2.35s cubic-bezier(.16,.84,.18,1) forwards; }
 .tree-shadow { fill:rgba(0,0,0,.3); filter:url(#treeShadow); opacity:.75; }
 .tree-trunk { transform-origin:210px 292px; transform:scaleY(0); }
-.login-tree-scene.is-grown .tree-trunk { animation: trunkGrow 1.2s .25s ease-out forwards; }
-.tree-crown { transform-origin:210px 145px; transform:scale(.05); opacity:0; }
-.login-tree-scene.is-grown .tree-crown { animation: crownGrow 1.15s 1.0s cubic-bezier(.2,.8,.2,1) forwards; }
+.login-tree-scene.is-grown .tree-trunk { animation: trunkGrow 1.35s .25s ease-out forwards; }
+.tree-crown { transform-origin:210px 145px; transform:scale(.04); opacity:0; }
+.login-tree-scene.is-grown .tree-crown { animation: crownGrow 1.35s 1.05s cubic-bezier(.2,.8,.2,1) forwards; }
 .tree-highlights { opacity:0; }
-.login-tree-scene.is-grown .tree-highlights { animation: fadeTree 1s 1.55s ease-out forwards; }
-.tree-glow { position:absolute; width:230px; height:150px; left:50%; top:45%; transform:translate(-50%,-50%); border-radius:50%; background:rgba(52,211,153,.12); filter:blur(34px); opacity:0; }
-.login-tree-scene.is-grown .tree-glow { animation: glowIn 1.5s 1.2s ease forwards; }
-.tree-ground { position:absolute; bottom:22px; left:50%; width:210px; height:30px; transform:translateX(-50%); border-radius:50%; background:rgba(0,0,0,.28); filter:blur(8px); opacity:0; }
-.login-tree-scene.is-grown .tree-ground { animation: fadeTree .8s .9s ease forwards; }
-.tree-caption { position:absolute; bottom:-2px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:6px; color:rgba(220,252,231,.7); font-size:11px; letter-spacing:.08em; text-transform:uppercase; opacity:0; white-space:nowrap; }
-.login-tree-scene.is-grown .tree-caption { animation: fadeTree .8s 1.8s ease forwards; }
+.login-tree-scene.is-grown .tree-highlights { animation: fadeTree 1s 1.65s ease-out forwards; }
+.tree-glow { position:absolute; width:min(520px,55vw); height:min(340px,42vh); left:50%; top:43%; transform:translate(-50%,-50%); border-radius:50%; background:rgba(52,211,153,.14); filter:blur(50px); opacity:0; }
+.login-tree-scene.is-grown .tree-glow { animation: glowIn 1.6s 1.15s ease forwards; }
+.tree-ground { position:absolute; bottom:4vh; left:50%; width:min(520px,48vw); height:55px; transform:translateX(-50%); border-radius:50%; background:rgba(0,0,0,.3); filter:blur(12px); opacity:0; }
+.login-tree-scene.is-grown .tree-ground { animation: fadeTree .8s .95s ease forwards; }
+.tree-caption { position:absolute; bottom:2.5vh; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:6px; color:rgba(220,252,231,.7); font-size:11px; letter-spacing:.08em; text-transform:uppercase; opacity:0; white-space:nowrap; }
+.login-tree-scene.is-grown .tree-caption { animation: fadeTree .8s 2s ease forwards; }
 .login-card {
   position:relative;
   z-index:5;
   width:min(410px, 94vw);
-  margin-top:260px;
+  margin-top:0;
   padding:30px;
   border:1px solid rgba(255,255,255,.18);
   border-radius:28px;
@@ -88,5 +96,5 @@ body {
 @keyframes fadeTree { to { opacity:1; } }
 @keyframes glowIn { to { opacity:1; } }
 @keyframes loginCardIn { from{opacity:0; transform:translateY(32px) scale(.94)} to{opacity:1; transform:translateY(0) scale(1)} }
-@media (max-height:720px) { .login-tree-scene { transform:translate(-50%,-72%) scale(.78); } .login-card { margin-top:190px; padding:22px; } }
+@media (max-height:720px) { .login-card { padding:22px; } }
 @media (prefers-reduced-motion: reduce) { .login-tree-scene.is-grown .tree-svg,.login-tree-scene.is-grown .tree-trunk,.login-tree-scene.is-grown .tree-crown,.login-tree-scene.is-grown .tree-highlights,.login-tree-scene.is-grown .tree-glow,.login-tree-scene.is-grown .tree-ground,.login-tree-scene.is-grown .tree-caption,.login-card { animation:none; opacity:1; transform:none; } }
