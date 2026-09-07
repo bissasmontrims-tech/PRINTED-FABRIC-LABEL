@@ -340,14 +340,11 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     if (!supabaseReady) return;
     setDataLoading(true);
     setDataError("");
-
-    // Supabase REST normally returns at most 1000 rows per request.
-    // Fetch every page so the dashboard always includes ALL historical data
-    // (today, tomorrow, next month, etc.) without any code update.
+    // Supabase/PostgREST commonly caps a single response at 1000 rows.
+    // Fetch in pages so the dashboard always sees the complete history.
     const PAGE_SIZE = 1000;
-    const allRows = [];
+    const all = [];
     let from = 0;
-
     while (true) {
       const { data, error } = await supabase
         .from("production_data")
@@ -355,33 +352,30 @@ export default function PFLDashboard({ session, profile, onLogout }) {
         .order("report_date", { ascending: true })
         .order("id", { ascending: true })
         .range(from, from + PAGE_SIZE - 1);
-
       if (error) {
         setDataError(`Failed to load data from database: ${error.message}`);
         setDataLoading(false);
         return;
       }
-
-      const rows = data || [];
-      allRows.push(...rows);
-      if (rows.length < PAGE_SIZE) break;
+      all.push(...(data || []));
+      if (!data || data.length < PAGE_SIZE) break;
       from += PAGE_SIZE;
     }
-
-    setRawData(allRows.map(dbRowToRecord));
+    setRawData(all.map(dbRowToRecord));
     setDataLoading(false);
   }, []);
 
   useEffect(() => {
     fetchFromDatabase();
-
-    // Keep the dashboard current automatically. New rows added to Supabase
-    // will appear without changing/redeploying the code.
-    const refreshTimer = setInterval(() => {
-      fetchFromDatabase();
-    }, 30000);
-
-    return () => clearInterval(refreshTimer);
+    // Keep the dashboard live. New production days/rows appear automatically
+    // without requiring a redeploy or manual code change.
+    const timer = setInterval(() => { fetchFromDatabase(); }, 30000);
+    const onFocus = () => fetchFromDatabase();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [fetchFromDatabase]);
 
   /* ---------- Daily Plan (Aslam/Murad/Biplob/Selim Reza/Shahjahan) ---------- */
