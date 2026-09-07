@@ -345,20 +345,36 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     if (!supabaseReady) return;
     setDataLoading(true);
     setDataError("");
-    const { data, error } = await supabase
-      .from("production_data")
-      .select("*")
-      .order("report_date", { ascending: true });
-    if (error) {
-      setDataError(`Failed to load data from database: ${error.message}`);
-      setDataLoading(false);
-      return;
+    const PAGE_SIZE = 1000;
+    const allRows = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from("production_data")
+        .select("*")
+        .order("report_date", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + PAGE_SIZE - 1);
+      if (error) {
+        setDataError(`Failed to load data from database: ${error.message}`);
+        setDataLoading(false);
+        return;
+      }
+      allRows.push(...(data || []));
+      if (!data || data.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
     }
-    setRawData(data.map(dbRowToRecord));
+    setRawData(allRows.map(dbRowToRecord));
     setDataLoading(false);
   }, []);
 
-  useEffect(() => { fetchFromDatabase(); }, [fetchFromDatabase]);
+  useEffect(() => {
+    fetchFromDatabase();
+    const timer = setInterval(() => fetchFromDatabase(), 30000);
+    const onFocus = () => fetchFromDatabase();
+    window.addEventListener("focus", onFocus);
+    return () => { clearInterval(timer); window.removeEventListener("focus", onFocus); };
+  }, [fetchFromDatabase]);
 
   /* ---------- Daily Plan (Aslam/Murad/Biplob/Selim Reza/Shahjahan) ---------- */
   const [dailyPlans, setDailyPlans] = useState([]); // raw rows: {id, plan_date, supervisor_name, planned_usd}
@@ -658,8 +674,6 @@ export default function PFLDashboard({ session, profile, onLogout }) {
       if (!row.date) { invalidDate++; invalid++; continue; } // row.date is a validated "YYYY-MM-DD" string or null
       if (isNaN(row.pcs) || isNaN(row.usd)) { invalid++; continue; }
       const sig = `${row.date}|${row.operator}|${row.jobNumber}|${row.machine}|${row.shift}`;
-      if (seen.has(sig)) { withinBatchDupes++; continue; }
-      seen.add(sig);
       clean.push(row);
     }
     setPreviewRows(clean);
@@ -691,10 +705,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     const payload = previewRows.map((r) => recordToDbRow(r, session?.user?.id));
     const { data, error } = await supabase
       .from("production_data")
-      .upsert(payload, {
-        onConflict: "report_date,job_number,machine_no,operator_name,shift",
-        ignoreDuplicates: true,
-      })
+      .insert(payload)
       .select();
     setSubmitting(false);
 
@@ -771,9 +782,9 @@ export default function PFLDashboard({ session, profile, onLogout }) {
           });
           processImportedRows(objs);
         } else {
-          const wb = XLSX.read(ev.target.result, { type: "array", cellDates: false });
+          const wb = XLSX.read(ev.target.result, { type: "array", cellDates: false, cellNF: true });
           const ws = wb.Sheets[wb.SheetNames[0]];
-          const objs = XLSX.utils.sheet_to_json(ws, { defval: "" });
+          const objs = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
           processImportedRows(objs);
         }
       } catch (err) {

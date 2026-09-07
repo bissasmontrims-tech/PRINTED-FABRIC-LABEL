@@ -280,3 +280,13 @@ Add these two, either during the import screen (step B.3 above) or afterward:
 | Local env vars | `.env.local` in the project root (never committed to Git) |
 | Vercel env vars | Vercel → your project → Settings → Environment Variables |
 | Source code | `src/pfl-dashboard.jsx` (main app), `src/lib/dateUtils.js` (date parsing), `src/components/` (login, auth, user management) |
+
+
+### One-time Supabase action
+If an older database still has the duplicate-blocking index, run this once in Supabase SQL Editor:
+
+```sql
+DROP INDEX IF EXISTS public.production_data_unique_key;
+```
+
+The app now loads production_data in 1000-row pages, refreshes every 30 seconds/on browser focus, and inserts every valid Excel row without deduplication.

@@ -62,10 +62,9 @@ create table if not exists public.production_data (
   created_by       uuid references auth.users(id)
 );
 
--- Duplicate protection: one record per date+job+machine+operator+shift.
--- This is the unique key used by the upsert-based duplicate detection in the app.
-create unique index if not exists production_data_unique_key
-  on public.production_data (report_date, job_number, machine_no, operator_name, shift);
+-- Production rows are append-only. Duplicate-looking rows are valid.
+-- If the old unique index already exists in Supabase, run:
+-- DROP INDEX IF EXISTS public.production_data_unique_key;
 
 -- Useful indexes for the dashboard's filters
 create index if not exists production_data_date_idx on public.production_data (report_date);
