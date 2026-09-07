@@ -57,6 +57,11 @@ const fmtPct = (n) => (n == null || isNaN(n) ? "—" : n.toFixed(1) + "%");
 // Dates are stored as plain "YYYY-MM-DD" strings (see src/lib/dateUtils.js).
 // Display is pure string formatting — never routed through `new Date(...)` —
 // so there is no timezone-driven day shift possible.
+function todayDhakaISO() {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const get = (type) => parts.find((p) => p.type === type)?.value || "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
 const fmtDate = (d) => formatDisplayDate(d);
 
 function monthKey(dateStr) { return monthKeyOf(dateStr); }
@@ -340,43 +345,20 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     if (!supabaseReady) return;
     setDataLoading(true);
     setDataError("");
-    // Supabase/PostgREST commonly caps a single response at 1000 rows.
-    // Fetch in pages so the dashboard always sees the complete history.
-    const PAGE_SIZE = 1000;
-    const all = [];
-    let from = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from("production_data")
-        .select("*")
-        .order("report_date", { ascending: true })
-        .order("id", { ascending: true })
-        .range(from, from + PAGE_SIZE - 1);
-      if (error) {
-        setDataError(`Failed to load data from database: ${error.message}`);
-        setDataLoading(false);
-        return;
-      }
-      all.push(...(data || []));
-      if (!data || data.length < PAGE_SIZE) break;
-      from += PAGE_SIZE;
+    const { data, error } = await supabase
+      .from("production_data")
+      .select("*")
+      .order("report_date", { ascending: true });
+    if (error) {
+      setDataError(`Failed to load data from database: ${error.message}`);
+      setDataLoading(false);
+      return;
     }
-    setRawData(all.map(dbRowToRecord));
+    setRawData(data.map(dbRowToRecord));
     setDataLoading(false);
   }, []);
 
-  useEffect(() => {
-    fetchFromDatabase();
-    // Keep the dashboard live. New production days/rows appear automatically
-    // without requiring a redeploy or manual code change.
-    const timer = setInterval(() => { fetchFromDatabase(); }, 30000);
-    const onFocus = () => fetchFromDatabase();
-    window.addEventListener("focus", onFocus);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener("focus", onFocus);
-    };
-  }, [fetchFromDatabase]);
+  useEffect(() => { fetchFromDatabase(); }, [fetchFromDatabase]);
 
   /* ---------- Daily Plan (Aslam/Murad/Biplob/Selim Reza/Shahjahan) ---------- */
   const [dailyPlans, setDailyPlans] = useState([]); // raw rows: {id, plan_date, supervisor_name, planned_usd}
@@ -668,20 +650,22 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   // the preview the user reviews before clicking "Submit to Database".
   function processImportedRows(objs) {
     let invalid = 0, withinBatchDupes = 0, emptyOperator = 0, invalidDate = 0;
+    const seen = new Set();
     const clean = [];
     for (const o of objs) {
       const row = normalizeRow(o);
       if (!row.operator) { emptyOperator++; invalid++; continue; }
       if (!row.date) { invalidDate++; invalid++; continue; } // row.date is a validated "YYYY-MM-DD" string or null
       if (isNaN(row.pcs) || isNaN(row.usd)) { invalid++; continue; }
-      // IMPORTANT: never skip duplicate-looking rows. Every valid Excel row
-      // must be preserved exactly as submitted.
+      const sig = `${row.date}|${row.operator}|${row.jobNumber}|${row.machine}|${row.shift}`;
+      if (seen.has(sig)) { withinBatchDupes++; continue; }
+      seen.add(sig);
       clean.push(row);
     }
     setPreviewRows(clean);
     setImportSummary({
       stage: "preview",
-      total: objs.length, valid: clean.length, invalid, withinBatchDupes: 0, emptyOperator, invalidDate,
+      total: objs.length, valid: clean.length, invalid, withinBatchDupes, emptyOperator, invalidDate,
     });
   }
 
@@ -707,7 +691,10 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     const payload = previewRows.map((r) => recordToDbRow(r, session?.user?.id));
     const { data, error } = await supabase
       .from("production_data")
-      .insert(payload)
+      .upsert(payload, {
+        onConflict: "report_date,job_number,machine_no,operator_name,shift",
+        ignoreDuplicates: true,
+      })
       .select();
     setSubmitting(false);
 
@@ -716,8 +703,8 @@ export default function PFLDashboard({ session, profile, onLogout }) {
       return;
     }
 
-    const inserted = data?.length || payload.length;
-    const dupesSkipped = 0;
+    const inserted = data.length;
+    const dupesSkipped = payload.length - inserted;
     const reportDates = uniqSorted(previewRows.map((r) => r.date));
     const label = reportDates.length === 1 ? `${formatDisplayDate(reportDates[0])} report` : `${reportDates.length} dates`;
 
@@ -725,7 +712,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
       stage: "done",
       total: payload.length,
       valid: inserted,
-      dupes: 0,
+      dupes: dupesSkipped,
       message: dupesSkipped > 0 && inserted === 0
         ? "Duplicate data detected. Existing data was not duplicated."
         : `${label} successfully saved to database.`,
@@ -784,9 +771,9 @@ export default function PFLDashboard({ session, profile, onLogout }) {
           });
           processImportedRows(objs);
         } else {
-          const wb = XLSX.read(ev.target.result, { type: "array", cellDates: false, cellNF: true });
+          const wb = XLSX.read(ev.target.result, { type: "array", cellDates: false });
           const ws = wb.Sheets[wb.SheetNames[0]];
-          const objs = XLSX.utils.sheet_to_json(ws, { defval: "", raw: true });
+          const objs = XLSX.utils.sheet_to_json(ws, { defval: "" });
           processImportedRows(objs);
         }
       } catch (err) {
@@ -811,7 +798,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
             const active = page === n.key;
             return (
               <button key={n.key} onClick={() => { setPage(n.key); setNavOpen(false); }}
-                className={`w-full flex items-center gap-3 px-5 py-2.5 text-sm text-left transition ${active ? "bg-blue-50 text-blue-700 font-semibold border-r-2 border-blue-600" : "text-slate-600 hover:bg-slate-50"}`}>
+                className={`w-full flex items-center gap-3 px-5 py-3 text-sm text-left transition-colors duration-150 ${active ? "!bg-blue-600 !text-white font-bold border-r-4 border-blue-300 shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}>
                 <Icon size={16} /> {n.label}
               </button>
             );
@@ -1106,9 +1093,9 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
 
 /* ============================== PAGE: DAILY PLAN ============================== */
 function DailyPlanPage({ dailyPlans, latestDate, allDates, onSubmit, loading, saving, error, savedMsg, canEdit, currency }) {
-  const [planDate, setPlanDate] = useState(latestDate || "");
-  // Keep the date field populated once data loads, without overwriting a date the user already picked.
-  useEffect(() => { if (!planDate && latestDate) setPlanDate(latestDate); }, [latestDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Daily Plan always opens on TODAY (Bangladesh time), not the latest uploaded production date.
+  // Production data may be uploaded only through yesterday (e.g. 06-Sep), while today's plan is for today (e.g. 07-Sep).
+  const [planDate, setPlanDate] = useState(() => todayDhakaISO());
 
   const plansForDate = useMemo(
     () => dailyPlans.filter((p) => p.plan_date === planDate),

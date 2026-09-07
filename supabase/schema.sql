@@ -62,10 +62,10 @@ create table if not exists public.production_data (
   created_by       uuid references auth.users(id)
 );
 
--- Production reports are row-level imports: duplicate-looking rows are valid
--- and must be preserved. Do NOT create a unique index across report fields.
--- If an older deployment created this index, remove it:
-drop index if exists public.production_data_unique_key;
+-- Duplicate protection: one record per date+job+machine+operator+shift.
+-- This is the unique key used by the upsert-based duplicate detection in the app.
+create unique index if not exists production_data_unique_key
+  on public.production_data (report_date, job_number, machine_no, operator_name, shift);
 
 -- Useful indexes for the dashboard's filters
 create index if not exists production_data_date_idx on public.production_data (report_date);
