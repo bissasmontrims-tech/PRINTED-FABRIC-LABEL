@@ -11,7 +11,7 @@ export default function Login() {
   const [introDone, setIntroDone] = useState(false);
 
   useEffect(() => {
-    const t = setTimeout(() => setIntroDone(true), 2850);
+    const t = setTimeout(() => setIntroDone(true), 2600);
     return () => clearTimeout(t);
   }, []);
 
@@ -31,18 +31,19 @@ export default function Login() {
   return (
     <main className="real-tree-login">
       <div className="tree-backdrop" aria-hidden="true" />
-      <div className="tree-vignette" aria-hidden="true" />
+      <div className="tree-atmosphere" aria-hidden="true" />
       <div className="sun-glow" aria-hidden="true" />
       <div className="wind-leaves" aria-hidden="true">
-        <span className="leaf l1">🍃</span><span className="leaf l2">🍃</span><span className="leaf l3">🍃</span>
-        <span className="leaf l4">🍃</span><span className="leaf l5">🍃</span><span className="leaf l6">🍃</span>
+        <span className="leaf l1">🍃</span><span className="leaf l2">🍃</span>
+        <span className="leaf l3">🍃</span><span className="leaf l4">🍃</span>
+        <span className="leaf l5">🍃</span><span className="leaf l6">🍃</span>
         <span className={`hero-leaf ${introDone ? "leaf-arrived" : ""}`}>🍃</span>
       </div>
 
       <section className={`real-login-card ${introDone ? "card-visible" : ""}`} aria-label="PFL Production login">
         <div className="card-leaf"><Leaf size={17} /></div>
         <div className="real-brand-mark"><Leaf size={22} /></div>
-        <div className="real-login-title">PFL <span>Production</span></div>
+        <div className="real-login-title"><b>PFL</b> <span>Production</span></div>
         <div className="real-login-subtitle">Welcome back · Secure production management</div>
 
         {!supabaseReady && (
