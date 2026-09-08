@@ -317,7 +317,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   const [navOpen, setNavOpen] = useState(false);
 
   const [settings, setSettings] = useState({
-    dailyTarget: 28000,  // requirement #9 — global daily production target (USD)
+    dailyTarget: 32000,  // requirement #9 — global daily production target (USD)
     belowTarget: 400,    // original per-operator/day threshold — preserved
     nearTargetPct: 90,
     dhuWarn: 2,
