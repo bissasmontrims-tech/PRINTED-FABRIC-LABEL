@@ -28,7 +28,6 @@ const NAV = [
   { key: "overview", label: "Overview", icon: LayoutGrid },
   { key: "daily", label: "Daily / Monthly / Yearly", icon: Calendar },
   { key: "dailyplan", label: "Daily Plan", icon: ClipboardList },
-  { key: "ot", label: "OT", icon: Printer },
   { key: "operators", label: "Operator Performance", icon: Users },
   { key: "machines", label: "Machine Performance", icon: Cog },
   { key: "mctype", label: "MC Type Performance", icon: Cog },
@@ -39,6 +38,7 @@ const NAV = [
   { key: "wastage", label: "Wastage & Breakdown", icon: AlertTriangle },
   { key: "table", label: "Data Table", icon: Table2 },
   { key: "import", label: "Import Data", icon: Upload, permission: "import_data" },
+  { key: "ot", label: "OT", icon: Printer },
   { key: "settings", label: "Settings", icon: SettingsIcon },
   { key: "users", label: "User Management", icon: UserCog, permission: "manage_users" },
 ];
