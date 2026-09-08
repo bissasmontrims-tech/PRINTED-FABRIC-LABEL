@@ -172,17 +172,44 @@ console) via `_runDateParserSelfTest()` in `src/lib/dateUtils.js`. Covers:
 8. Filter Month = September 2026 → both dates appear.
 9. Re-upload the exact same `03/09/2026` file → import summary reports duplicates skipped, not new rows.
 
-## Daily Plan (Aslam / Murad / Biplob / Selim Reza / Shahjahan)
+## Daily Plan (job-level entries, one login per supervisor)
 
-A dedicated **Daily Plan** page (sidebar) lets Admin/Manager accounts enter
-each supervisor's planned USD for a chosen date. Submitting upserts into the
-new `daily_plans` table (see `supabase/daily_plan.sql` — run it once in the
-SQL Editor, after `schema.sql`), keyed on `(plan_date, supervisor_name)`, so
-resubmitting the same date updates each supervisor's number instead of
-duplicating rows. The **Daily Plan Total** is not stored separately — it's
-always the live sum of whatever plans exist for that date, so it can never
-drift out of sync. Read access follows the same role rules as production
-data (Operators see it read-only); write access is Admin/Manager only.
+Each supervisor — Aslam, Murad, Biplob, Selim Reza, Shahjahan — has their own
+Supabase Auth login (`role = 'supervisor'` in `profiles`, linked to their
+name via `profiles.supervisor_name`). Run `supabase/daily_plan_entries.sql`
+once in the SQL Editor (after `schema.sql`) to create the `daily_plan_entries`
+table and its RLS policies.
+
+**Supervisor view**: a form (Job No, Buyer No, Order Quantity, Challan
+Quantity, Production USD, Operator Name, Machine Name) submits a new entry
+dated automatically to today — date, supervisor name, and `user_id` are never
+taken from the browser, only from the logged-in session. Below it, a table of
+their own entries for a chosen date, with per-day totals and **Pending PCS**
+(`Order − Challan`, floored at 0). They can edit/delete their own entries.
+
+**Admin view**: a date-filtered summary across all 5 supervisors (Production
+USD, Order PCS, Challan PCS, Pending PCS, entry count) with totals at the
+top; clicking a supervisor's row drills into their individual entries for
+that date, editable/deletable by Admin.
+
+**Security**: enforced by Postgres RLS using `auth.uid()`, not just the UI —
+a supervisor's `SELECT`/`INSERT`/`UPDATE`/`DELETE` are all scoped to
+`user_id = auth.uid()`, and `INSERT`/`UPDATE` additionally require
+`supervisor_name` to match that user's own linked name (via a
+`my_supervisor_name()` helper), so no combination of frontend edits, URL
+params, or direct API calls can read or write another supervisor's rows.
+Admin has unrestricted access; Manager/Operator have none (no policy exists
+for them on this table — RLS defaults to deny). See
+`supabase/daily_plan_entries.sql` for the exact policies.
+
+To create a supervisor account: Supabase → Authentication → Users → Add
+user → Create new user. Then in the dashboard's **User Management** page (or
+directly in the `profiles` table), set that account's role to `supervisor`
+and link it to one of the 5 names.
+
+The earlier one-number-per-day version of this feature (`daily_plans` /
+`daily_plan.sql`) is no longer used by the app — it's left in place, unused,
+rather than dropped, so no data is destroyed.
 
 ## Notes
 
