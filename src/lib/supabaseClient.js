@@ -12,7 +12,14 @@ export const supabaseReady = Boolean(url && anonKey);
 
 export const supabase = supabaseReady
   ? createClient(url, anonKey, {
-      auth: { persistSession: true, autoRefreshToken: true },
+      auth: {
+        // Keep the login only for the current browser tab/session.
+        // Closing the desktop/browser window clears sessionStorage, so the
+        // user must log in again next time. Page refresh still keeps login.
+        persistSession: true,
+        storage: window.sessionStorage,
+        autoRefreshToken: true,
+      },
     })
   : null;
 

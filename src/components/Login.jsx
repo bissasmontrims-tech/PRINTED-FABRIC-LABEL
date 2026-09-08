@@ -28,7 +28,6 @@ export default function Login() {
       <div className="tree-atmosphere" aria-hidden="true" />
 
       <section className="real-login-card card-visible" aria-label="PFL Production login">
-        <div className="card-leaf" aria-hidden="true"><Leaf size={34} strokeWidth={1.8} /></div>
         <div className="real-brand-mark"><Leaf size={22} /></div>
         <div className="real-login-title"><b>PFL</b> <span>Production</span></div>
         <div className="real-login-subtitle">Welcome back · Secure production management</div>
