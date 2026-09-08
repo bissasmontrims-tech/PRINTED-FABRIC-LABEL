@@ -1612,6 +1612,7 @@ function OTPage({ documents, onSave, onDelete }) {
     id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     date: today(), company: "MONTRIMS LTD | TRIMS INTERNATIONAL (BD) LTD.",
     rows: OT_MACHINE_TEMPLATE.map((r, i) => ({ sl: i + 1, mc: r[0], totalHC: r[1], h2: r[2], h3: r[3], h4: r[4], h5: r[5], h6: r[6], otHour: "", otCost: "", tiffin: "", night: "", buyer: r[7], reason: "", target: "" })),
+    sections: OT_MACHINE_TEMPLATE.slice(0, 9).map(() => false),
     lineManager: "", gmProduction: ""
   });
   const [doc, setDoc] = useState(() => documents[0] || makeDoc());
@@ -1622,6 +1623,7 @@ function OTPage({ documents, onSave, onDelete }) {
   }, []);
 
   const updateRow = (idx, key, value) => setDoc(d => ({ ...d, rows: d.rows.map((r,i) => i === idx ? { ...r, [key]: value } : r) }));
+  const toggleSection = (idx) => setDoc(d => ({ ...d, sections: (d.sections || OT_MACHINE_TEMPLATE.slice(0, 9).map(() => false)).map((v,i) => i === idx ? !v : v) }));
   const addRow = () => setDoc(d => ({ ...d, rows: [...d.rows, blankOTRow(d.rows.length)] }));
   const removeRow = (idx) => setDoc(d => ({ ...d, rows: d.rows.filter((_,i) => i !== idx).map((r,i) => ({...r, sl:i+1})) }));
   const num = v => Number(v) || 0;
@@ -1639,7 +1641,15 @@ function OTPage({ documents, onSave, onDelete }) {
       <div className="ot-actions">
         <button className="ot-btn secondary" onClick={newDoc}><Plus size={16}/> New OT</button>
         <button className="ot-btn primary" onClick={save}><Save size={16}/> Save</button>
-        <button className="ot-btn print" onClick={() => window.print()} disabled={!saved}><Printer size={16}/> Ready to Print</button>
+        <button className="ot-btn print" onClick={() => {
+          document.body.classList.add("ot-print-mode");
+          const cleanup = () => {
+            document.body.classList.remove("ot-print-mode");
+            window.removeEventListener("afterprint", cleanup);
+          };
+          window.addEventListener("afterprint", cleanup);
+          window.setTimeout(() => window.print(), 50);
+        }} disabled={!saved}><Printer size={16}/> Ready to Print</button>
       </div>
     </div>
 
@@ -1657,7 +1667,8 @@ function OTPage({ documents, onSave, onDelete }) {
         </div>
 
         <div className="ot-category-grid">
-          {[["Sewing Thread","Yarn Dyeing"],["Woven Label","Continuous Dyeing"],["Printed Label","Gum Tape"],["Screen Print","Carton"],["Narrow Fabric","Quality"],["Rubber Patch","Poly"],["Heat Print","Hanger"],["Offset","PVC"],["Thermal",""]].map((x,i)=><div key={i}><b>{x[0]}</b><span>{x[1]}</span></div>)}
+          {[ ["Sewing Thread","Yarn Dyeing"],["Woven Label","Continuous Dyeing"],["Printed Label","Gum Tape"],["Screen Print","Carton"],["Narrow Fabric","Quality"],["Rubber Patch","Poly"],["Heat Print","Hanger"],["Offset","PVC"],["Thermal",""]].map((x,i)=><label key={i} className="ot-category-item"><input type="checkbox" checked={Boolean(doc.sections?.[i])} onChange={()=>toggleSection(i)} /><span><b>{x[0]}</b>{x[1] && <small>{x[1]}</small>}</span></label>)}
+        </div>)}
         </div>
 
         <div className="ot-section-title">Worker</div>
