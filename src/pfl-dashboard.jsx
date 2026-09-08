@@ -8,7 +8,7 @@ import {
   LayoutGrid, Calendar, Users, Cog, Sun, ShoppingBag, Building2, Search,
   Table2, Upload, Settings as SettingsIcon, AlertTriangle, CheckCircle2,
   TrendingUp, TrendingDown, ChevronDown, ChevronUp, X, RotateCcw, Download,
-  ArrowUpDown, User, LogOut, ShieldCheck, UserCog, ClipboardList, Printer, Plus, Trash2, Save, FileText
+  ArrowUpDown, User, LogOut, ShieldCheck, UserCog, ClipboardList
 } from "lucide-react";
 import { supabase, supabaseReady } from "./lib/supabaseClient";
 import {
@@ -38,7 +38,6 @@ const NAV = [
   { key: "wastage", label: "Wastage & Breakdown", icon: AlertTriangle },
   { key: "table", label: "Data Table", icon: Table2 },
   { key: "import", label: "Import Data", icon: Upload, permission: "import_data" },
-  { key: "ot", label: "OT", icon: Printer },
   { key: "settings", label: "Settings", icon: SettingsIcon },
   { key: "users", label: "User Management", icon: UserCog, permission: "manage_users" },
 ];
@@ -330,25 +329,6 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     dhuCrit: 4,
     currency: "USD",
   });
-
-  // OT Ready-to-Print documents are stored in this browser; no DB/schema change is required.
-  const [otDocuments, setOtDocuments] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("pfl_ot_documents") || "[]"); } catch { return []; }
-  });
-  const saveOtDocument = useCallback((doc) => {
-    setOtDocuments(prev => {
-      const next = [doc, ...prev.filter(x => x.id !== doc.id)].slice(0, 50);
-      localStorage.setItem("pfl_ot_documents", JSON.stringify(next));
-      return next;
-    });
-  }, []);
-  const deleteOtDocument = useCallback((id) => {
-    setOtDocuments(prev => {
-      const next = prev.filter(x => x.id !== id);
-      localStorage.setItem("pfl_ot_documents", JSON.stringify(next));
-      return next;
-    });
-  }, []);
 
   const [filters, setFilters] = useState({
     datePreset: "all", startDate: "", endDate: "",
@@ -924,7 +904,6 @@ export default function PFLDashboard({ session, profile, onLogout }) {
               error={planError} savedMsg={planSavedMsg} canEdit={can(profile, "import_data")}
               currency={settings.currency} />
           )}
-          {page === "ot" && <OTPage documents={otDocuments} onSave={saveOtDocument} onDelete={deleteOtDocument} />}
           {page === "operators" && (
             <OperatorsPage operatorRows={operatorRows} settings={settings} options={options}
               selectedOperator={selectedOperator} setSelectedOperator={setSelectedOperator}
@@ -1584,128 +1563,6 @@ function ImportPage({ handleFile, importSummary, fileInputRef, rawData, previewR
       )}
     </div>
   );
-}
-
-/* ============================== PAGE: OT / READY TO PRINT ============================== */
-const OT_MACHINE_TEMPLATE = [
-  ["FLEXO", 39, 0, 4, 29, 0, 0, "PEPCO / Next / Tesco/"],
-  ["NYLO", 4, 0, 0, 0, 0, 0, "Puma / Next / Tesco / Otto / Bonprix"],
-  ["SCREEN PRINT", 9, 0, 0, 9, 0, 0, "H&M / Tesco / Renfold / Startex"],
-  ["CUTTING", 39, 0, 4, 29, 0, 0, "Okaidi / Puma / H&M / Guess USA"],
-  ["BLOCK MAKING", 1, 0, 0, 1, 0, 0, "Teddy S.P.A / Calzedonia / Kariban"],
-  ["QURING", 1, 0, 0, 0, 0, 0, ""],
-  ["RIBBON SLIDING", 2, 0, 0, 2, 0, 0, "Carter's / Others / Signet Enterprise"],
-  ["OFFICE STUFF", 15, 0, 0, 0, 0, 0, "Carter's / Others / Signet Enterprise"],
-  ["", 0, 0, 0, 0, 0, 0, "Garan / Puma / Tesco / H&M / Okaidi"],
-  ["", 0, 0, 0, 0, 0, 0, "Supporting"],
-  ["", 0, 0, 0, 0, 0, 0, "Puma / Next / Carter's / Target USA"],
-];
-
-const blankOTRow = (i) => ({
-  sl: i + 1, mc: "", totalHC: "", h2: "", h3: "", h4: "", h5: "", h6: "",
-  otHour: "", otCost: "", tiffin: "", night: "", buyer: "", reason: "", target: ""
-});
-
-function OTPage({ documents, onSave, onDelete }) {
-  const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Dhaka" }).format(new Date());
-  const makeDoc = () => ({
-    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    date: today(), company: "MONTRIMS LTD | TRIMS INTERNATIONAL (BD) LTD.",
-    rows: OT_MACHINE_TEMPLATE.map((r, i) => ({ sl: i + 1, mc: r[0], totalHC: r[1], h2: r[2], h3: r[3], h4: r[4], h5: r[5], h6: r[6], otHour: "", otCost: "", tiffin: "", night: "", buyer: r[7], reason: "", target: "" })),
-    sections: OT_MACHINE_TEMPLATE.slice(0, 9).map(() => false),
-    lineManager: "", gmProduction: ""
-  });
-  const [doc, setDoc] = useState(() => documents[0] || makeDoc());
-  const [saved, setSaved] = useState(Boolean(documents.length));
-
-  useEffect(() => {
-    if (!documents.length && !doc?.id) setDoc(makeDoc());
-  }, []);
-
-  const updateRow = (idx, key, value) => setDoc(d => ({ ...d, rows: d.rows.map((r,i) => i === idx ? { ...r, [key]: value } : r) }));
-  const toggleSection = (idx) => setDoc(d => ({ ...d, sections: (d.sections || OT_MACHINE_TEMPLATE.slice(0, 9).map(() => false)).map((v,i) => i === idx ? !v : v) }));
-  const addRow = () => setDoc(d => ({ ...d, rows: [...d.rows, blankOTRow(d.rows.length)] }));
-  const removeRow = (idx) => setDoc(d => ({ ...d, rows: d.rows.filter((_,i) => i !== idx).map((r,i) => ({...r, sl:i+1})) }));
-  const num = v => Number(v) || 0;
-  const rowOtHours = r => num(r.h2)*2 + num(r.h3)*3 + num(r.h4)*4 + num(r.h5)*5 + num(r.h6)*6;
-  const rowOtCost = r => num(r.h3)*3*80 + num(r.h4)*4*80 + num(r.h5)*5*80 + num(r.h6)*6*80 + num(r.h2)*2*80;
-  const totalOT = doc.rows.reduce((a,r)=>a+rowOtHours(r),0);
-  const totalCost = doc.rows.reduce((a,r)=>a+rowOtCost(r)+num(r.tiffin)+num(r.night),0);
-  const save = () => { const next = { ...doc, rows: doc.rows.map(r => ({...r, otHour: rowOtHours(r), otCost: rowOtCost(r)})), savedAt: new Date().toISOString() }; setDoc(next); onSave(next); setSaved(true); };
-  const newDoc = () => { setDoc(makeDoc()); setSaved(false); };
-  const loadDoc = d => { setDoc(d); setSaved(true); };
-
-  return <div className="ot-page">
-    <div className="ot-toolbar no-print">
-      <div><SectionTitle>OT</SectionTitle><p className="text-sm text-slate-500">Overtime Approval Sheet — manually update, save, then print.</p></div>
-      <div className="ot-actions">
-        <button className="ot-btn secondary" onClick={newDoc}><Plus size={16}/> New OT</button>
-        <button className="ot-btn primary" onClick={save}><Save size={16}/> Save</button>
-        <button className="ot-btn print" onClick={() => {
-          document.body.classList.add("ot-print-mode");
-          const cleanup = () => {
-            document.body.classList.remove("ot-print-mode");
-            window.removeEventListener("afterprint", cleanup);
-          };
-          window.addEventListener("afterprint", cleanup);
-          window.setTimeout(() => window.print(), 50);
-        }} disabled={!saved}><Printer size={16}/> Ready to Print</button>
-      </div>
-    </div>
-
-    <div className="ot-layout">
-      <Card className="ot-editor no-print">
-        <div className="ot-editor-head"><strong>Saved OT Sheets</strong><span>{documents.length}</span></div>
-        {documents.length === 0 ? <div className="ot-empty">No saved OT sheet yet.</div> : documents.map(d => <div key={d.id} className="ot-saved-item"><button onClick={()=>loadDoc(d)}><FileText size={15}/><span>{d.date || "No date"}</span></button><button className="delete" onClick={()=>onDelete(d.id)}><Trash2 size={14}/></button></div>)}
-        <div className="ot-help">Fill the editable cells in the sheet. Save makes the current version Ready to Print. Saved sheets stay in this browser.</div>
-      </Card>
-
-      <div className="ot-print-sheet">
-        <div className="ot-header">
-          <div><input className="ot-company" value={doc.company} onChange={e=>setDoc({...doc,company:e.target.value})}/><h1>Overtime (OT) Approval Sheet</h1></div>
-          <label>Date<input type="date" value={doc.date} onChange={e=>setDoc({...doc,date:e.target.value})}/></label>
-        </div>
-
-        <div className="ot-category-grid">
-          {[ ["Sewing Thread","Yarn Dyeing"],["Woven Label","Continuous Dyeing"],["Printed Label","Gum Tape"],["Screen Print","Carton"],["Narrow Fabric","Quality"],["Rubber Patch","Poly"],["Heat Print","Hanger"],["Offset","PVC"],["Thermal",""]].map((x,i)=><label key={i} className="ot-category-item"><input type="checkbox" checked={Boolean(doc.sections?.[i])} onChange={()=>toggleSection(i)} /><span><b>{x[0]}</b>{x[1] && <small>{x[1]}</small>}</span></label>)}
-        </div>)}
-        </div>
-
-        <div className="ot-section-title">Worker</div>
-        <div className="ot-table-wrap">
-          <table className="ot-table">
-            <thead><tr>
-              <th>SL</th><th>M/C Name / Work Area</th><th>Total HC</th><th>OT HC<br/>2HR</th><th>OT HC<br/>3HR</th><th>OT HC<br/>4HR</th><th>OT HC<br/>5HR</th><th>OT HC<br/>6HR</th><th>Total OT<br/>Hour</th><th>OT Cost</th><th>Tiffin<br/>Bill</th><th>Night<br/>Bill</th><th>Total<br/>Cost</th><th>Buyer Name</th><th className="no-print">Action</th>
-            </tr></thead>
-            <tbody>{doc.rows.map((r,i)=>{
-              const oh=rowOtHours(r), oc=rowOtCost(r), tc=oc+num(r.tiffin)+num(r.night);
-              return <tr key={r.sl}>
-                <td>{r.sl}</td>
-                <td><input value={r.mc} onChange={e=>updateRow(i,"mc",e.target.value)}/></td>
-                <td><input type="number" value={r.totalHC} onChange={e=>updateRow(i,"totalHC",e.target.value)}/></td>
-                {[["h2","2"],["h3","3"],["h4","4"],["h5","5"],["h6","6"]].map(([k])=><td key={k}><input type="number" min="0" value={r[k]} onChange={e=>updateRow(i,k,e.target.value)}/></td>)}
-                <td className="calc">{oh}</td><td className="calc">{oc.toLocaleString()}</td>
-                <td><input type="number" value={r.tiffin} onChange={e=>updateRow(i,"tiffin",e.target.value)}/></td>
-                <td><input type="number" value={r.night} onChange={e=>updateRow(i,"night",e.target.value)}/></td>
-                <td className="calc">{tc.toLocaleString()}</td>
-                <td><input value={r.buyer} onChange={e=>updateRow(i,"buyer",e.target.value)}/></td>
-                <td className="no-print"><button className="row-delete" onClick={()=>removeRow(i)}><Trash2 size={13}/></button></td>
-              </tr>})}</tbody>
-            <tfoot><tr><th colSpan="3">TOTAL</th><th colSpan="5"></th><th>{totalOT}</th><th>{doc.rows.reduce((a,r)=>a+rowOtCost(r),0).toLocaleString()}</th><th>{doc.rows.reduce((a,r)=>a+num(r.tiffin),0).toLocaleString()}</th><th>{doc.rows.reduce((a,r)=>a+num(r.night),0).toLocaleString()}</th><th>{totalCost.toLocaleString()}</th><th></th><th className="no-print"></th></tr></tfoot>
-          </table>
-        </div>
-        <button className="ot-add no-print" onClick={addRow}><Plus size={15}/> Add Worker Row</button>
-
-        <div className="ot-section-title">Worker / Production Target</div>
-        <div className="ot-target-table">
-          <table className="ot-table"><thead><tr><th>SL No.</th><th>M/C Name / Work Area</th><th>Total HC</th><th>OT HC</th><th>Total OT Hour</th><th>Production Target in OT Hour</th><th>Reason</th></tr></thead>
-          <tbody>{doc.rows.slice(0,10).map((r,i)=><tr key={i}><td>{i+1}</td><td><input value={r.mc} onChange={e=>updateRow(i,"mc",e.target.value)}/></td><td><input type="number" value={r.totalHC} onChange={e=>updateRow(i,"totalHC",e.target.value)}/></td><td className="calc">{num(r.h2)+num(r.h3)+num(r.h4)+num(r.h5)+num(r.h6)}</td><td className="calc">{rowOtHours(r)}</td><td><input type="number" value={r.target} onChange={e=>updateRow(i,"target",e.target.value)}/></td><td><input value={r.reason} onChange={e=>updateRow(i,"reason",e.target.value)}/></td></tr>)}</tbody></table>
-        </div>
-        <div className="ot-signatures"><div>Line Manager: <b>{doc.lineManager || "________________"}</b></div><div>GM - Production: <b>{doc.gmProduction || "________________"}</b></div></div>
-        <div className="ot-footer-status">{saved ? `Saved • Ready to Print • ${doc.savedAt ? new Date(doc.savedAt).toLocaleString() : ""}` : "Unsaved changes — press Save before printing."}</div>
-      </div>
-    </div>
-  </div>;
 }
 
 /* ============================== PAGE: SETTINGS ============================== */
