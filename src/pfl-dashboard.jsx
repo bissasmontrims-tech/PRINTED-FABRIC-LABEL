@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell
+  Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LabelList
 } from "recharts";
 import * as XLSX from "xlsx";
 import {
@@ -46,6 +46,13 @@ const COLORS = ["#2563eb", "#0891b2", "#7c3aed", "#d97706", "#059669", "#dc2626"
 // The five supervisors who submit a Daily Plan — matches the `supervisor_name`
 // check constraint in supabase/daily_plan.sql. Add a name in both places to extend.
 const SUPERVISORS = ["Aslam", "Murad", "Biplob", "Selim Reza", "Shahjahan"];
+// Overview's core production KPIs (Total PCS, Total USD, Target USD,
+// Management Alerts, Best/Lowest Operator, Operator Below $400) are scoped
+// to only these MC types — Cutting, QC, Dropping, etc. are excluded from
+// those specific widgets. The rest of the app (Operator Performance page,
+// Machine/MC Type/Data Table pages, "Operator Below 50,000 PCS") is
+// unaffected and still covers every MC type.
+const CORE_MC_TYPES = ["Flexo", "Nylo", "Auto Screen"];
 const INK = "#1e293b";
 const MUTE = "#64748b";
 const LINE = "#e2e8f0";
@@ -90,6 +97,23 @@ function groupBy(records, keyFn) {
     map.get(k).push(r);
   }
   return map;
+}
+
+// For a set of records belonging to ONE operator, picks the buyer/MC
+// type/machine that contributed the most USD — used to show a single
+// representative "(buyer)" tag next to an operator whose records may span
+// several buyers/machines (e.g. "FARUK - $7,000 (PEPCO)").
+function primaryAttributes(records) {
+  const pick = (keyFn) => {
+    let best = null, bestUsd = -1;
+    groupBy(records, keyFn).forEach((recs, key) => {
+      if (!key) return;
+      const usd = recs.reduce((s, r) => s + (Number(r.usd) || 0), 0);
+      if (usd > bestUsd) { bestUsd = usd; best = key; }
+    });
+    return best;
+  };
+  return { primaryBuyer: pick((r) => r.buyer), primaryMcType: pick((r) => r.mcType), primaryMachine: pick((r) => r.machine) };
 }
 
 /* ============================== SMALL UI PRIMITIVES ============================== */
@@ -331,7 +355,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   });
 
   const [filters, setFilters] = useState({
-    datePreset: "all", startDate: "", endDate: "",
+    datePreset: "today", startDate: "", endDate: "", // defaults to Today per requirement A
     operator: "", mcType: "", shift: "", jobNumber: "", buyer: "", customer: "", machine: "",
   });
   const [selectedOperator, setSelectedOperator] = useState("");
@@ -501,7 +525,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     });
   }, [rawData, dateRange, filters]);
 
-  const resetFilters = () => setFilters({ datePreset: "all", startDate: "", endDate: "", operator: "", mcType: "", shift: "", jobNumber: "", buyer: "", customer: "", machine: "" });
+  const resetFilters = () => setFilters({ datePreset: "today", startDate: "", endDate: "", operator: "", mcType: "", shift: "", jobNumber: "", buyer: "", customer: "", machine: "" });
 
   /* ---------- operator status classification ---------- */
   const operatorStatus = useCallback((usd) => {
@@ -510,59 +534,81 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     return "Below $400";
   }, [settings]);
 
-  /* ---------- operator ranking (over current filtered scope) ---------- */
-  const operatorRows = useMemo(() => {
-    const byOp = groupBy(filteredData, (r) => r.operator);
-    const days = new Set(filteredData.map((r) => r.date)).size || 1;
+  // Shared builder for an operator-ranking table from any record set — used
+  // both for the full "Operator Performance" page (all MC types) and the
+  // Overview's core-scoped widgets (Flexo/Nylo/Auto Screen only, see below).
+  function buildOperatorRows(records) {
+    const byOp = groupBy(records, (r) => r.operator);
     const rows = [];
-    byOp.forEach((records, operator) => {
-      const agg = aggregate(records);
-      const opDays = new Set(records.map((r) => r.date)).size || 1;
+    byOp.forEach((opRecords, operator) => {
+      const agg = aggregate(opRecords);
+      const opDays = new Set(opRecords.map((r) => r.date)).size || 1;
       const target = settings.belowTarget * opDays;
-      const jobs = new Set(records.map((r) => r.jobNumber)).size;
-      const machines = uniqSorted(records.map((r) => r.machine)).join(", ");
+      const jobs = new Set(opRecords.map((r) => r.jobNumber)).size;
+      const machines = uniqSorted(opRecords.map((r) => r.machine)).join(", ");
+      const { primaryBuyer, primaryMcType, primaryMachine } = primaryAttributes(opRecords);
       rows.push({
         operator, pcs: agg.pcs, usd: agg.usd, target,
         achievement: target ? (agg.usd / target) * 100 : 0,
         avgUsdPerDay: agg.usd / opDays, jobs, machines, days: opDays,
+        primaryBuyer, primaryMcType, primaryMachine,
         status: operatorStatus(agg.usd / opDays * (settings.belowTarget / settings.belowTarget)), // per-day basis
       });
     });
     rows.sort((a, b) => b.usd - a.usd);
     rows.forEach((r, i) => (r.rank = i + 1));
     return rows;
-  }, [filteredData, settings, operatorStatus]);
+  }
 
-  const belowTargetOps = operatorRows.filter((r) => r.status === "Below $400");
-  const topOps = [...operatorRows].sort((a, b) => b.usd - a.usd).slice(0, 5);
+  /* ---------- operator ranking (over current filtered scope, ALL MC types) ---------- */
+  // Used by the full "Operator Performance" page and the new, unrestricted
+  // "Operator Below 50,000 PCS" section (requirement E — that one
+  // deliberately covers every machine category, unlike the widgets below).
+  const operatorRows = useMemo(() => buildOperatorRows(filteredData), [filteredData, settings, operatorStatus]);
+  const below50kPcsOps = useMemo(() => operatorRows.filter((r) => r.pcs < 50000).sort((a, b) => a.pcs - b.pcs), [operatorRows]);
+
+  /* ---------- core-scoped data (Flexo/Nylo/Auto Screen only) ---------- */
+  // Requirement B/C/D: Total PCS, Total USD, Target USD, Management Alerts,
+  // Best/Lowest Operator, and Operator Below $400 all use ONLY these three
+  // MC types. Every other page/section is unaffected.
+  const coreScopedData = useMemo(() => filteredData.filter((r) => CORE_MC_TYPES.includes(r.mcType)), [filteredData]);
+  const coreOperatorRows = useMemo(() => buildOperatorRows(coreScopedData), [coreScopedData, settings, operatorStatus]);
+
+  const belowTargetOps = coreOperatorRows.filter((r) => r.status === "Below $400");
+  const topOps = [...coreOperatorRows].sort((a, b) => b.usd - a.usd).slice(0, 5);
 
   /* ---------- KPIs ---------- */
   const kpi = useMemo(() => {
-    const agg = aggregate(filteredData);
+    const fullAgg = aggregate(filteredData);
+    const coreAgg = aggregate(coreScopedData);
     const days = new Set(filteredData.map((r) => r.date)).size || 1;
-    const operatorDayPairs = new Set(filteredData.map((r) => r.operator + "|" + r.date)).size;
-    const totalTarget = operatorDayPairs * settings.belowTarget;
+    const coreOperatorDayPairs = new Set(coreScopedData.map((r) => r.operator + "|" + r.date)).size;
+    const totalTarget = coreOperatorDayPairs * settings.belowTarget;
     const operators = new Set(filteredData.map((r) => r.operator)).size;
     const jobs = new Set(filteredData.map((r) => r.jobNumber)).size;
     const machines = new Set(filteredData.map((r) => r.machine)).size;
     return {
-      pcs: agg.pcs, usd: agg.usd, target: totalTarget,
-      achievement: totalTarget ? (agg.usd / totalTarget) * 100 : 0,
-      gap: agg.usd - totalTarget,
+      // Total PCS / Total USD / Target USD / Achievement — core MC types only.
+      pcs: coreAgg.pcs, usd: coreAgg.usd, target: totalTarget,
+      achievement: totalTarget ? (coreAgg.usd / totalTarget) * 100 : 0,
+      gap: coreAgg.usd - totalTarget,
+      // Everything below is unaffected by the core-type restriction (not
+      // named in requirement B) and still reflects all MC types.
       operators, jobs, machines,
-      avgUsdPerOp: operators ? agg.usd / operators : 0,
-      avgPcsPerOp: operators ? agg.pcs / operators : 0,
-      avgDhu: agg.avgDhu, wastage: agg.wastage, breakdown: agg.breakdown, days,
+      avgUsdPerOp: operators ? fullAgg.usd / operators : 0,
+      avgPcsPerOp: operators ? fullAgg.pcs / operators : 0,
+      avgDhu: fullAgg.avgDhu, wastage: fullAgg.wastage, breakdown: fullAgg.breakdown, days,
     };
-  }, [filteredData, settings]);
+  }, [filteredData, coreScopedData, settings]);
 
   // Requirement #9: global Daily Production Target ($28,000 by default,
   // editable in Settings). Always reflects the most recent report date in
   // the database, independent of the other filters, so "today's" number
   // doesn't silently change when someone filters by operator/machine/etc.
+  // Actual production is core-MC-type-scoped, same as Total USD above.
   // Achievement is intentionally uncapped (can exceed 100%).
   const dailyTargetInfo = useMemo(() => {
-    const todayRecords = rawData.filter((r) => r.date === latestDate);
+    const todayRecords = rawData.filter((r) => r.date === latestDate && CORE_MC_TYPES.includes(r.mcType));
     const actual = aggregate(todayRecords).usd;
     return {
       date: latestDate,
@@ -651,7 +697,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     if (kpi.breakdown > 0) list.push({ sev: "warning", text: `${fmtInt(kpi.breakdown)} machine breakdown hours recorded in current scope` });
     if (kpi.avgDhu != null && kpi.avgDhu > settings.dhuCrit) list.push({ sev: "critical", text: `Average DHU ${kpi.avgDhu.toFixed(2)}% exceeds critical threshold (${settings.dhuCrit}%)` });
     if (kpi.achievement >= 100) list.push({ sev: "good", text: "Production target achieved for the current scope" });
-    if (topOps[0]) list.push({ sev: "good", text: `Top operator: ${topOps[0].operator} (${fmtUsd(topOps[0].usd)})` });
+    if (topOps[0]) list.push({ sev: "good", text: `Top operator: ${topOps[0].operator} - ${fmtUsd(topOps[0].usd)}${topOps[0].primaryBuyer ? ` (${topOps[0].primaryBuyer})` : ""}` });
     if (!list.length) list.push({ sev: "good", text: "No alerts — all metrics within normal range" });
     return list;
   }, [belowTargetOps, kpi, settings, topOps]);
@@ -930,7 +976,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
 
         <main className="flex-1 p-4 lg:p-6 overflow-x-hidden">
           {page === "overview" && (
-            <OverviewPage kpi={kpi} settings={settings} alerts={alerts} operatorRows={operatorRows} belowTargetOps={belowTargetOps} topOps={topOps} dailySeries={dailySeries} mcTypeRows={mcTypeRows} dailyTargetInfo={dailyTargetInfo} />
+            <OverviewPage kpi={kpi} settings={settings} alerts={alerts} operatorRows={coreOperatorRows} below50kPcsOps={below50kPcsOps} belowTargetOps={belowTargetOps} topOps={topOps} dailySeries={dailySeries} mcTypeRows={mcTypeRows} dailyTargetInfo={dailyTargetInfo} />
           )}
           {page === "daily" && (
             <DailyPage dailySeries={dailySeries} monthlySeries={monthlySeries} yearlySeries={yearlySeries} operatorRows={operatorRows} settings={settings} />
@@ -949,8 +995,8 @@ export default function PFLDashboard({ session, profile, onLogout }) {
           {page === "machines" && <BreakdownPage title="Machine" rows={machineRows} labelKey="machine" />}
           {page === "mctype" && <BreakdownPage title="MC Type" rows={mcTypeRows} labelKey="mcType" />}
           {page === "shift" && <BreakdownPage title="Shift" rows={shiftRows} labelKey="shift" />}
-          {page === "buyers" && <BreakdownPage title="Buyer" rows={buyerRows} labelKey="buyer" />}
-          {page === "customers" && <BreakdownPage title="Customer" rows={customerRows} labelKey="customer" />}
+          {page === "buyers" && <BreakdownPage title="Buyer" rows={buyerRows} labelKey="buyer" stacked />}
+          {page === "customers" && <BreakdownPage title="Customer" rows={customerRows} labelKey="customer" stacked />}
           {page === "jobs" && <JobsPage jobQuery={jobQuery} setJobQuery={setJobQuery} jobResults={jobResults} settings={settings} />}
           {page === "wastage" && <WastagePage filteredData={filteredData} kpi={kpi} settings={settings} />}
           {page === "table" && <TablePage filteredData={filteredData} />}
@@ -968,7 +1014,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
 }
 
 /* ============================== PAGE: OVERVIEW ============================== */
-function OverviewPage({ kpi, settings, alerts, operatorRows, belowTargetOps, topOps, dailySeries, mcTypeRows, dailyTargetInfo }) {
+function OverviewPage({ kpi, settings, alerts, operatorRows, below50kPcsOps, belowTargetOps, topOps, dailySeries, mcTypeRows, dailyTargetInfo }) {
   return (
     <div className="flex flex-col gap-5">
       <Card className="border-blue-100 bg-gradient-to-br from-blue-50 to-white">
@@ -1025,8 +1071,8 @@ function OverviewPage({ kpi, settings, alerts, operatorRows, belowTargetOps, top
           <SectionTitle>Top Operator vs Lowest</SectionTitle>
           {operatorRows.length ? (
             <div className="flex flex-col gap-3 text-sm">
-              <div className="flex justify-between"><span className="text-slate-500">Best Operator</span><span className="font-semibold">{operatorRows[0].operator} · {fmtUsd(operatorRows[0].usd)}</span></div>
-              <div className="flex justify-between"><span className="text-slate-500">Lowest Operator</span><span className="font-semibold">{operatorRows[operatorRows.length - 1].operator} · {fmtUsd(operatorRows[operatorRows.length - 1].usd)}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Best Operator</span><span className="font-semibold">{operatorRows[0].operator} - {fmtUsd(operatorRows[0].usd)}{operatorRows[0].primaryBuyer ? ` (${operatorRows[0].primaryBuyer})` : ""}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">Lowest Operator</span><span className="font-semibold">{operatorRows[operatorRows.length - 1].operator} - {fmtUsd(operatorRows[operatorRows.length - 1].usd)}{operatorRows[operatorRows.length - 1].primaryBuyer ? ` (${operatorRows[operatorRows.length - 1].primaryBuyer})` : ""}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Best Machine</span><span className="font-semibold">{mcTypeRows[0]?.mcType ?? "—"}</span></div>
               <div className="flex justify-between"><span className="text-slate-500">Below Target Count</span><span className="font-semibold text-rose-600">{belowTargetOps.length}</span></div>
             </div>
@@ -1056,6 +1102,7 @@ function OverviewPage({ kpi, settings, alerts, operatorRows, belowTargetOps, top
               <Tooltip formatter={(v) => fmtUsd(v)} />
               <Bar dataKey="usd" name="USD" radius={[4, 4, 0, 0]}>
                 {mcTypeRows.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                <LabelList dataKey="usd" position="top" formatter={(v) => fmtUsd(v)} style={{ fontSize: 11, fill: INK }} />
               </Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
@@ -1063,7 +1110,7 @@ function OverviewPage({ kpi, settings, alerts, operatorRows, belowTargetOps, top
       </div>
 
       <Card>
-        <SectionTitle right={<span className="text-xs text-rose-600 font-medium">{belowTargetOps.length} flagged</span>}>Operators Below {fmtUsd(settings.belowTarget)}</SectionTitle>
+        <SectionTitle right={<span className="text-xs text-rose-600 font-medium">{belowTargetOps.length} flagged</span>}>Operators Below {fmtUsd(settings.belowTarget)} <span className="text-xs font-normal text-slate-400">(Flexo / Nylo / Auto Screen only)</span></SectionTitle>
         {belowTargetOps.length ? (
           <DataTable pageSize={5} columns={[
             { key: "operator", label: "Operator" },
@@ -1071,11 +1118,24 @@ function OverviewPage({ kpi, settings, alerts, operatorRows, belowTargetOps, top
             { key: "usd", label: "USD", render: (r) => fmtUsd(r.usd) },
             { key: "target", label: "Target", render: (r) => fmtUsd(r.target) },
             { key: "achievement", label: "Achv %", render: (r) => fmtPct(r.achievement) },
-            { key: "days", label: "Days" },
-            { key: "jobs", label: "Jobs" },
+            { key: "primaryBuyer", label: "Buyer", render: (r) => r.primaryBuyer || "—" },
             { key: "machines", label: "Machine" },
           ]} rows={belowTargetOps} initialSort={{ key: "usd", dir: "asc" }} />
         ) : <EmptyState text="No operators below threshold — great work!" />}
+      </Card>
+
+      <Card>
+        <SectionTitle right={<span className="text-xs text-amber-600 font-medium">{below50kPcsOps.length} flagged</span>}>Operator Below 50,000 PCS Production <span className="text-xs font-normal text-slate-400">(all MC types)</span></SectionTitle>
+        {below50kPcsOps.length ? (
+          <DataTable pageSize={5} columns={[
+            { key: "operator", label: "Operator" },
+            { key: "pcs", label: "Production PCS", render: (r) => fmtInt(r.pcs) },
+            { key: "usd", label: "Production USD", render: (r) => fmtUsd(r.usd) },
+            { key: "primaryBuyer", label: "Buyer", render: (r) => r.primaryBuyer || "—" },
+            { key: "primaryMcType", label: "MC Type", render: (r) => r.primaryMcType || "—" },
+            { key: "primaryMachine", label: "Machine", render: (r) => r.primaryMachine || "—" },
+          ]} rows={below50kPcsOps} initialSort={{ key: "pcs", dir: "asc" }} />
+        ) : <EmptyState text="No operators below 50,000 PCS" />}
       </Card>
     </div>
   );
@@ -1119,8 +1179,12 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip formatter={(v) => fmtUsd(v)} />
               <Legend />
-              <Bar dataKey="target" name="Target" fill="#cbd5e1" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="usd" name="Actual" fill={COLORS[0]} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="target" name="Target" fill="#cbd5e1" radius={[4, 4, 0, 0]}>
+                <LabelList dataKey="target" position="top" formatter={(v) => fmtUsd(v)} style={{ fontSize: 10, fill: MUTE }} />
+              </Bar>
+              <Bar dataKey="usd" name="Actual" fill={COLORS[0]} radius={[4, 4, 0, 0]}>
+                <LabelList dataKey="usd" position="top" formatter={(v) => fmtUsd(v)} style={{ fontSize: 10, fill: INK }} />
+              </Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
@@ -1572,7 +1636,9 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
                       <td className="px-3 py-2">{e.operator_name || "—"}</td>
                       <td className="px-3 py-2">{e.machine_name || "—"}</td>
                       <td className="px-3 py-2">
-                        <button onClick={() => { if (window.confirm("Delete this entry?")) onDelete(e.id); }} disabled={saving} className="text-xs text-rose-600 hover:underline">Delete</button>
+                        {!readOnly && (
+                          <button onClick={() => { if (window.confirm("Delete this entry?")) onDelete(e.id); }} disabled={saving} className="text-xs text-rose-600 hover:underline">Delete</button>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1593,15 +1659,35 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
 
 /* ============================== PAGE: OPERATORS ============================== */
 function OperatorsPage({ operatorRows, settings, options, selectedOperator, setSelectedOperator, operatorScoped, latestDate }) {
+  const [operatorSearch, setOperatorSearch] = useState("");
+  const filteredOperatorOptions = useMemo(() => {
+    const q = operatorSearch.trim().toLowerCase();
+    return q ? options.operators.filter((o) => o.toLowerCase().includes(q)) : options.operators;
+  }, [options.operators, operatorSearch]);
+  // Typing a name that narrows to exactly one match immediately shows that
+  // operator's performance, per requirement F ("searching 'far' finds
+  // 'FARUK'... should immediately show Faruk's performance").
+  useEffect(() => {
+    if (operatorSearch.trim() && filteredOperatorOptions.length === 1) setSelectedOperator(filteredOperatorOptions[0]);
+  }, [operatorSearch, filteredOperatorOptions, setSelectedOperator]);
+
   return (
     <div className="flex flex-col gap-5">
       <Card>
         <SectionTitle>Select Operator</SectionTitle>
-        <select value={selectedOperator} onChange={(e) => setSelectedOperator(e.target.value)}
-          className="w-full max-w-md text-base border border-slate-300 rounded-xl px-4 py-3 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300 font-medium">
-          <option value="">— Choose an operator —</option>
-          {options.operators.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="relative flex-1 max-w-sm">
+            <Search size={15} className="absolute left-3 top-3.5 text-slate-400" />
+            <input type="text" value={operatorSearch} onChange={(e) => setOperatorSearch(e.target.value)}
+              placeholder="Search operator by name..."
+              className="w-full pl-9 pr-3 py-3 text-sm border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-300" />
+          </div>
+          <select value={selectedOperator} onChange={(e) => setSelectedOperator(e.target.value)}
+            className="flex-1 max-w-md text-base border border-slate-300 rounded-xl px-4 py-3 bg-white focus:outline-none focus:ring-2 focus:ring-blue-300 font-medium">
+            <option value="">— Choose an operator ({filteredOperatorOptions.length}) —</option>
+            {filteredOperatorOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </div>
       </Card>
 
       {selectedOperator && operatorScoped && (
@@ -1710,29 +1796,57 @@ function OperatorPeriodBlock({ title, data, extra }) {
 }
 
 /* ============================== PAGE: GENERIC BREAKDOWN (Machine/MCType/Shift/Buyer/Customer) ============================== */
-function BreakdownPage({ title, rows, labelKey }) {
+function BreakdownPage({ title, rows, labelKey, stacked = false }) {
+  // Buyer/Customer analysis (requirement H) uses a full-width, horizontal
+  // bar layout instead of side-by-side rotated-label charts — long buyer/
+  // customer names read left-to-right without truncation or rotation.
+  const chartHeight = stacked ? Math.max(240, rows.length * 34) : 260;
   return (
     <div className="flex flex-col gap-5">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ChartCard title={`${title}-wise Production PCS`}>
+      <div className={stacked ? "flex flex-col gap-4" : "grid grid-cols-1 lg:grid-cols-2 gap-4"}>
+        <ChartCard title={`${title}-wise Production PCS`} height={chartHeight}>
           {rows.length ? (
-            <BarChart data={rows}>
-              <CartesianGrid stroke={LINE} vertical={false} />
-              <XAxis dataKey={labelKey} tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={50} />
-              <YAxis tick={{ fontSize: 11 }} />
+            <BarChart data={rows} layout={stacked ? "vertical" : undefined} margin={stacked ? { left: 12, right: 40 } : undefined}>
+              <CartesianGrid stroke={LINE} horizontal={!stacked} vertical={stacked} />
+              {stacked ? (
+                <>
+                  <XAxis type="number" tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey={labelKey} tick={{ fontSize: 11 }} width={130} />
+                </>
+              ) : (
+                <>
+                  <XAxis dataKey={labelKey} tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={50} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                </>
+              )}
               <Tooltip formatter={(v) => fmtInt(v)} />
-              <Bar dataKey="pcs" radius={[4, 4, 0, 0]}>{rows.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Bar>
+              <Bar dataKey="pcs" radius={stacked ? [0, 4, 4, 0] : [4, 4, 0, 0]}>
+                {rows.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                <LabelList dataKey="pcs" position={stacked ? "right" : "top"} formatter={(v) => fmtInt(v)} style={{ fontSize: 11, fill: INK }} />
+              </Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
-        <ChartCard title={`${title}-wise Production USD`}>
+        <ChartCard title={`${title}-wise Production USD`} height={chartHeight}>
           {rows.length ? (
-            <BarChart data={rows}>
-              <CartesianGrid stroke={LINE} vertical={false} />
-              <XAxis dataKey={labelKey} tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={50} />
-              <YAxis tick={{ fontSize: 11 }} />
+            <BarChart data={rows} layout={stacked ? "vertical" : undefined} margin={stacked ? { left: 12, right: 50 } : undefined}>
+              <CartesianGrid stroke={LINE} horizontal={!stacked} vertical={stacked} />
+              {stacked ? (
+                <>
+                  <XAxis type="number" tick={{ fontSize: 11 }} />
+                  <YAxis type="category" dataKey={labelKey} tick={{ fontSize: 11 }} width={130} />
+                </>
+              ) : (
+                <>
+                  <XAxis dataKey={labelKey} tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={50} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                </>
+              )}
               <Tooltip formatter={(v) => fmtUsd(v)} />
-              <Bar dataKey="usd" radius={[4, 4, 0, 0]}>{rows.map((_, i) => <Cell key={i} fill={COLORS[(i + 3) % COLORS.length]} />)}</Bar>
+              <Bar dataKey="usd" radius={stacked ? [0, 4, 4, 0] : [4, 4, 0, 0]}>
+                {rows.map((_, i) => <Cell key={i} fill={COLORS[(i + 3) % COLORS.length]} />)}
+                <LabelList dataKey="usd" position={stacked ? "right" : "top"} formatter={(v) => fmtUsd(v)} style={{ fontSize: 11, fill: INK }} />
+              </Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
@@ -1818,7 +1932,7 @@ function WastagePage({ filteredData, kpi, settings }) {
               <XAxis dataKey="operator" tick={{ fontSize: 9 }} interval={0} angle={-30} textAnchor="end" height={70} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip />
-              <Bar dataKey="wastage" fill={COLORS[3]} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="wastage" fill={COLORS[3]} radius={[4, 4, 0, 0]}><LabelList dataKey="wastage" position="top" formatter={(v) => fmtInt(v)} style={{ fontSize: 10, fill: INK }} /></Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
@@ -1829,7 +1943,7 @@ function WastagePage({ filteredData, kpi, settings }) {
               <XAxis dataKey="machine" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip />
-              <Bar dataKey="breakdown" fill={COLORS[5]} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="breakdown" fill={COLORS[5]} radius={[4, 4, 0, 0]}><LabelList dataKey="breakdown" position="top" formatter={(v) => fmtInt(v)} style={{ fontSize: 10, fill: INK }} /></Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>

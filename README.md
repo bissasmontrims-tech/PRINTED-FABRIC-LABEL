@@ -227,6 +227,39 @@ The earlier one-number-per-day version of this feature (`daily_plans` /
 `daily_plan.sql`) is no longer used by the app — it's left in place, unused,
 rather than dropped, so no data is destroyed.
 
+## Overview page scoping (Flexo / Nylo / Auto Screen)
+
+**Total PCS**, **Total USD**, **Target USD** (and its Achievement %), the
+**$28,000 Daily Target** card, **Management Alerts**, and **Best/Lowest
+Operator** all count only Flexo, Nylo, and Auto Screen records — Cutting,
+QC, Dropping, and any other MC Type are excluded from *these specific
+widgets only*. Everything else (the full Operator Performance page, Machine/
+MC Type/Shift/Buyer/Customer pages, the Data Table, CSV export) is
+unaffected and still covers every MC type — including the "Production USD
+by MC Type" chart on Overview itself, which deliberately still shows all
+categories so you can see the full mix.
+
+Best/Lowest Operator and the "Operators Below $400" table now show each
+operator's biggest buyer alongside them (whichever buyer contributed the
+most USD to that operator's core-scoped production) — e.g. "FARUK - $7,000
+(PEPCO)". A new **"Operator Below 50,000 PCS Production"** section sits
+directly below "Below $400" — this one deliberately covers *all* MC types,
+not just the core three, and excludes anyone at exactly 50,000 PCS.
+
+Operator Performance now has a search box above the operator dropdown —
+case-insensitive, partial-match; narrowing to exactly one result opens that
+operator's detail automatically.
+
+Charts on the Machine/MC Type/Shift/Buyer/Customer pages, the MC Type chart
+on Overview, Target vs Actual, and Wastage/Breakdown now show their values
+directly on the bars (not just on hover). Buyer and Customer Analysis use a
+full-width horizontal layout (names run left-to-right, unrotated) instead of
+two rotated-label charts side by side, so long buyer/customer names stay
+readable.
+
+The Overview date filter now defaults to **Today** on load and after
+Reset — it previously defaulted to "All Dates".
+
 ## Notes
 
 - The dashboard's existing calculations, filters, tables, charts, and layout
