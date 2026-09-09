@@ -1315,8 +1315,8 @@ function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg,
       </Card>
     );
   }
-  return profile.role === "admin"
-    ? <AdminDailyPlanView planEntries={planEntries} loading={loading} saving={saving} error={error} savedMsg={savedMsg}
+  return (profile.role === "admin" || profile.role === "manager")
+    ? <AdminDailyPlanView readOnly={profile.role === "manager"} title={profile.role === "manager" ? "Manager view" : "Admin view"} planEntries={planEntries} loading={loading} saving={saving} error={error} savedMsg={savedMsg}
         onSubmit={onSubmit} onDelete={onDelete} currency={currency} supervisorDirectory={supervisorDirectory} />
     : <SupervisorDailyPlanView profile={profile} planEntries={planEntries} loading={loading} saving={saving} error={error}
         savedMsg={savedMsg} onSubmit={onSubmit} onUpdate={onUpdate} onDelete={onDelete} currency={currency} />;
@@ -1423,7 +1423,7 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
 }
 
 /* ---- Admin view: overall + supervisor-wise summary, drill-down, global Pending Jobs, own Add Entry ---- */
-function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, currency, supervisorDirectory }) {
+function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, currency, supervisorDirectory, readOnly = false, title = "Admin view" }) {
   const latestEntryDate = useMemo(() => {
     const dates = uniqSorted(planEntries.map((e) => e.plan_date));
     return dates[dates.length - 1] || todayDhakaISO();
@@ -1474,12 +1474,12 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div>
             <h2 className="text-base font-semibold text-slate-800">Daily Plan — All Supervisors</h2>
-            <p className="text-xs text-slate-400">Admin view</p>
+            <p className="text-xs text-slate-400">{title}</p>
           </div>
           <div className="flex items-center gap-2">
             <input type="date" value={filterDate} onChange={(e) => { setFilterDate(e.target.value); setSelectedSupervisor(null); }}
               className="text-sm border border-slate-200 rounded-lg px-2 py-1.5" />
-            {supervisorDirectory.length > 0 && (
+            {!readOnly && supervisorDirectory.length > 0 && (
               <button onClick={() => setShowForm((v) => !v)}
                 className="flex items-center gap-1.5 bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-blue-700 transition shrink-0">
                 <span className="text-lg leading-none">+</span> Add Entry
@@ -1503,7 +1503,7 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
               } />
           </div>
         )}
-        {supervisorDirectory.length === 0 && (
+        {!readOnly && supervisorDirectory.length === 0 && (
           <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3">
             No supervisor accounts are linked yet — link one in User Management to enable Admin "+ Add Entry".
           </p>

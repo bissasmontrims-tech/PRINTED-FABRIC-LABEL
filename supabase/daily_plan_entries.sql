@@ -88,6 +88,15 @@ create policy "daily_plan_entries: admin all" on public.daily_plan_entries
   for all using (public.current_role() = 'admin')
   with check (public.current_role() = 'admin');
 
+-- Manager: read-only access to all Daily Plan rows.
+-- Managers can view every supervisor's plan but cannot insert, update, or delete.
+drop policy if exists "daily_plan_entries: manager select all" on public.daily_plan_entries;
+create policy "daily_plan_entries: manager select all" on public.daily_plan_entries
+  for select using (
+    public.current_role() = 'manager'
+    and public.is_active_user()
+  );
+
 -- Supervisor: SELECT only their own rows.
 drop policy if exists "daily_plan_entries: supervisor select own" on public.daily_plan_entries;
 create policy "daily_plan_entries: supervisor select own" on public.daily_plan_entries
@@ -132,11 +141,9 @@ create policy "daily_plan_entries: supervisor delete own" on public.daily_plan_e
     and user_id = auth.uid()
   );
 
--- No policy is created for admin/manager/operator roles beyond the 'admin
--- all' policy above — Managers and Operators have no access to this table
--- (matches the spec: only Admin sees everyone, only the owning Supervisor
--- sees their own). This is enforced by RLS's default-deny: a role with no
--- matching policy gets zero rows, not an error.
+-- Managers have read-only access to all rows; Operators have no access.
+-- Admins retain full access, and Supervisors retain access only to their own rows.
+-- This is enforced by RLS's default-deny for all other operations.
 
 -- ============================================================================
 -- End. Next: in Supabase → Authentication → Users, create one login per
