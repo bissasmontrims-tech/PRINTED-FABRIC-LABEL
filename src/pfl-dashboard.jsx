@@ -403,25 +403,41 @@ export default function PFLDashboard({ session, profile, onLogout }) {
 
   useEffect(() => { fetchPlanEntries(); }, [fetchPlanEntries]);
 
+  // Which login account belongs to which supervisor — lets Admin submit an
+  // entry "as" a supervisor with the correct real user_id, not the admin's
+  // own id. Only admins can read other people's profiles (see schema.sql's
+  // "profiles: admin read all" policy), so this naturally returns nothing
+  // for a supervisor account, which is fine — they don't need it.
+  const [supervisorDirectory, setSupervisorDirectory] = useState([]); // [{id, supervisor_name}]
+  useEffect(() => {
+    if (!supabaseReady || profile?.role !== "admin") return;
+    supabase.from("profiles").select("id,supervisor_name").eq("role", "supervisor").not("supervisor_name", "is", null)
+      .then(({ data, error }) => { if (!error && data) setSupervisorDirectory(data); });
+  }, [profile?.role]);
+
   // entry: { plan_date, job_no, buyer_no, order_quantity, challan_quantity,
   //          production_usd, operator_name, machine_name }. supervisor_name
   // and user_id are NEVER taken from the caller — always the logged-in
   // supervisor's own linked identity, matching the RLS policy exactly, so a
   // client-side bug can't even attempt to submit as someone else.
-  async function submitPlanEntry(entry) {
-    if (!supabaseReady) { setPlanError("Supabase is not configured — Daily Plan cannot be saved."); return; }
-    if (!profile?.supervisor_name) { setPlanError("Your account isn't linked to a supervisor yet — ask an Admin to set this in User Management."); return; }
+  // `as` optionally overrides the identity a row is saved under — ONLY ever
+  // supplied by the Admin "+ Add Entry" form (picking a target supervisor
+  // from supervisorDirectory), never by a supervisor's own form. A
+  // supervisor always saves under their own session/profile, matching the
+  // RLS insert policy exactly.
+  async function submitPlanEntry(entry, as) {
+    if (!supabaseReady) { setPlanError("Supabase is not configured — Daily Plan cannot be saved."); return false; }
+    const targetUserId = as?.user_id || session?.user?.id;
+    const targetSupervisorName = as?.supervisor_name || profile?.supervisor_name;
+    if (!targetSupervisorName || !targetUserId) { setPlanError("No supervisor identity to save this entry under — ask an Admin to link this account in User Management."); return false; }
     setPlanSaving(true); setPlanError(""); setPlanSavedMsg("");
-    const row = {
-      ...entry,
-      user_id: session?.user?.id,
-      supervisor_name: profile.supervisor_name,
-    };
+    const row = { ...entry, user_id: targetUserId, supervisor_name: targetSupervisorName };
     const { error } = await supabase.from("daily_plan_entries").insert(row);
     setPlanSaving(false);
-    if (error) { setPlanError(`Database insert failed: ${error.message}`); return; }
+    if (error) { setPlanError(`Database insert failed: ${error.message}`); return false; }
     setPlanSavedMsg(`Entry for ${formatDisplayDate(entry.plan_date)} saved successfully.`);
     await fetchPlanEntries();
+    return true;
   }
 
   async function updatePlanEntry(id, patch) {
@@ -922,7 +938,8 @@ export default function PFLDashboard({ session, profile, onLogout }) {
           {page === "dailyplan" && can(profile, "access_daily_plan") && (
             <DailyPlanPage profile={profile} planEntries={planEntries} loading={planLoading} saving={planSaving}
               error={planError} savedMsg={planSavedMsg} onSubmit={submitPlanEntry}
-              onUpdate={updatePlanEntry} onDelete={deletePlanEntry} currency={settings.currency} />
+              onUpdate={updatePlanEntry} onDelete={deletePlanEntry} currency={settings.currency}
+              supervisorDirectory={supervisorDirectory} />
           )}
           {page === "operators" && (
             <OperatorsPage operatorRows={operatorRows} settings={settings} options={options}
@@ -1128,31 +1145,166 @@ const EMPTY_ENTRY_FORM = {
   production_usd: "", operator_name: "", machine_name: "",
 };
 
+// Pending is always floored at 0 and always computed — never stored — from
+// Order Quantity minus the SUM of every production entry for that job
+// (see jobAggregates below). "challan" here is the challan_quantity column;
+// the UI label for it is "Production Quantity" throughout (renamed per spec —
+// the database column name is unchanged since existing data depends on it).
 function pendingPcs(order, challan) {
   const p = (Number(order) || 0) - (Number(challan) || 0);
   return p > 0 ? p : 0;
 }
 
-function TextField({ label, value, onChange }) {
+// Groups a set of entries by Job No into cumulative, job-wise totals. This is
+// the single source of truth for "is this job done yet" — never today's
+// production alone. Canonical Order Quantity for a job is the largest
+// order_quantity seen across its entries (supervisors only need to enter the
+// real order size once; later entries can leave it blank/0).
+function jobAggregates(entries) {
+  const byJob = new Map();
+  for (const e of entries) {
+    if (!e.job_no) continue;
+    if (!byJob.has(e.job_no)) {
+      byJob.set(e.job_no, { job_no: e.job_no, buyer_no: e.buyer_no, order_quantity: 0, produced: 0, lastDate: e.plan_date, supervisor_name: e.supervisor_name, entries: [] });
+    }
+    const g = byJob.get(e.job_no);
+    g.order_quantity = Math.max(g.order_quantity, Number(e.order_quantity) || 0);
+    g.produced += Number(e.challan_quantity) || 0;
+    g.entries.push(e);
+    if (e.plan_date > g.lastDate) { g.lastDate = e.plan_date; g.buyer_no = e.buyer_no || g.buyer_no; g.supervisor_name = e.supervisor_name; }
+  }
+  return Array.from(byJob.values()).map((g) => {
+    const pending = pendingPcs(g.order_quantity, g.produced);
+    return { ...g, pending, status: pending <= 0 ? "Completed" : "Pending" };
+  });
+}
+
+function TextField({ label, value, onChange, readOnly, hint }) {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</label>
-      <input type="text" value={value} onChange={(e) => onChange(e.target.value)}
-        className="text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+      <input type="text" value={value} readOnly={readOnly} onChange={(e) => onChange(e.target.value)}
+        className={`text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200 ${readOnly ? "bg-slate-50 text-slate-500" : ""}`} />
+      {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
     </div>
   );
 }
-function NumField({ label, value, onChange, step = "1" }) {
+function NumField({ label, value, onChange, step = "1", readOnly, hint }) {
   return (
     <div className="flex flex-col gap-1">
       <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</label>
-      <input type="number" min="0" step={step} value={value} onChange={(e) => onChange(e.target.value)}
-        className="text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+      <input type="number" min="0" step={step} value={value} readOnly={readOnly} onChange={(e) => onChange(e.target.value)}
+        className={`text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200 ${readOnly ? "bg-slate-50 text-slate-500" : ""}`} />
+      {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
     </div>
   );
 }
 
-function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency }) {
+// Shared job-wise summary table — used for both "My Pending Jobs" (a
+// supervisor's own, already scoped by RLS + the caller) and Admin's global
+// "Pending Jobs" list. `showSupervisorCol` adds the Supervisor column for
+// the admin/global case.
+function PendingJobsTable({ jobs, showSupervisorCol, currency }) {
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll ? jobs : jobs.filter((j) => j.status === "Pending");
+  const sorted = [...visible].sort((a, b) => (a.status === b.status ? b.pending - a.pending : a.status === "Pending" ? -1 : 1));
+  return (
+    <div>
+      <label className="flex items-center gap-2 text-xs text-slate-500 mb-3">
+        <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
+        Show completed jobs too
+      </label>
+      {sorted.length ? (
+        <div className="overflow-x-auto rounded-lg border border-slate-200">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-200">
+                {["Job No", "Buyer No", "Order", "Production", "Pending", ...(showSupervisorCol ? ["Supervisor"] : []), "Last Production Date", "Status"].map((h) => (
+                  <th key={h} className="text-left px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((j) => (
+                <tr key={j.job_no} className="border-b border-slate-100 last:border-0">
+                  <td className="px-3 py-2 font-medium text-slate-700">{j.job_no}</td>
+                  <td className="px-3 py-2">{j.buyer_no || "—"}</td>
+                  <td className="px-3 py-2">{fmtInt(j.order_quantity)}</td>
+                  <td className="px-3 py-2">{fmtInt(j.produced)}</td>
+                  <td className="px-3 py-2 font-semibold">{fmtInt(j.pending)}</td>
+                  {showSupervisorCol && <td className="px-3 py-2">{j.supervisor_name}</td>}
+                  <td className="px-3 py-2">{fmtDate(j.lastDate)}</td>
+                  <td className="px-3 py-2"><span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${j.status === "Completed" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-rose-50 text-rose-700 border-rose-200"}`}>{j.status}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <EmptyState text={showAll ? "No jobs yet" : "No pending jobs — everything's completed"} />}
+    </div>
+  );
+}
+
+// The 7-field entry form, shared by the supervisor's own submission and
+// Admin's "on behalf of" submission. `existingJob` (from jobAggregates, for
+// whichever Job No is currently typed) drives the completed-job guard and
+// the Order Quantity auto-fill/lock.
+function EntryForm({ onSubmit, onCancel, saving, myJobs, extraFields }) {
+  const [form, setForm] = useState(EMPTY_ENTRY_FORM);
+  const [blockedMsg, setBlockedMsg] = useState("");
+
+  const existingJob = form.job_no ? myJobs.find((j) => j.job_no === form.job_no) : null;
+
+  function setField(key, value) {
+    setForm((f) => ({ ...f, [key]: value }));
+    setBlockedMsg("");
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setBlockedMsg("");
+    const job = form.job_no ? myJobs.find((j) => j.job_no === form.job_no) : null;
+    if (job && job.status === "Completed") {
+      setBlockedMsg("This Job is already completed.");
+      return;
+    }
+    const payload = {
+      job_no: form.job_no || null,
+      buyer_no: form.buyer_no || null,
+      order_quantity: Number(job ? job.order_quantity : form.order_quantity) || 0,
+      challan_quantity: Number(form.challan_quantity) || 0,
+      production_usd: Number(form.production_usd) || 0,
+      operator_name: form.operator_name || null,
+      machine_name: form.machine_name || null,
+    };
+    const ok = await onSubmit(payload);
+    if (ok !== false) setForm(EMPTY_ENTRY_FORM);
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {extraFields}
+      <TextField label="Job No" value={form.job_no} onChange={(v) => setField("job_no", v)} />
+      <TextField label="Buyer No" value={form.buyer_no} onChange={(v) => setField("buyer_no", v)} />
+      <NumField label="Order Quantity" value={existingJob ? existingJob.order_quantity : form.order_quantity}
+        onChange={(v) => setField("order_quantity", v)} readOnly={Boolean(existingJob)}
+        hint={existingJob ? `Existing job — produced ${fmtInt(existingJob.produced)} of ${fmtInt(existingJob.order_quantity)} so far, ${fmtInt(existingJob.pending)} pending` : undefined} />
+      <NumField label="Production Quantity" value={form.challan_quantity} onChange={(v) => setField("challan_quantity", v)} />
+      <NumField label="Production USD" value={form.production_usd} onChange={(v) => setField("production_usd", v)} step="0.01" />
+      <TextField label="Operator Name" value={form.operator_name} onChange={(v) => setField("operator_name", v)} />
+      <TextField label="Machine Name" value={form.machine_name} onChange={(v) => setField("machine_name", v)} />
+      {blockedMsg && <div className="sm:col-span-2 text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{blockedMsg}</div>}
+      <div className="sm:col-span-2 flex gap-2 mt-1">
+        <button type="submit" disabled={saving} className="flex-1 bg-blue-600 text-white text-sm font-semibold py-2.5 rounded-xl hover:bg-blue-700 transition disabled:opacity-50">
+          {saving ? "Saving..." : "Submit Entry"}
+        </button>
+        <button type="button" onClick={onCancel} className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, supervisorDirectory }) {
   if (profile.role === "supervisor" && !profile.supervisor_name) {
     return (
       <Card className="max-w-lg">
@@ -1164,85 +1316,70 @@ function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg,
     );
   }
   return profile.role === "admin"
-    ? <AdminDailyPlanView planEntries={planEntries} loading={loading} saving={saving} error={error} onDelete={onDelete} currency={currency} />
-    : <SupervisorDailyPlanView profile={profile} planEntries={planEntries} loading={loading} saving={saving} error={error} savedMsg={savedMsg} onSubmit={onSubmit} onUpdate={onUpdate} onDelete={onDelete} currency={currency} />;
+    ? <AdminDailyPlanView planEntries={planEntries} loading={loading} saving={saving} error={error} savedMsg={savedMsg}
+        onSubmit={onSubmit} onDelete={onDelete} currency={currency} supervisorDirectory={supervisorDirectory} />
+    : <SupervisorDailyPlanView profile={profile} planEntries={planEntries} loading={loading} saving={saving} error={error}
+        savedMsg={savedMsg} onSubmit={onSubmit} onUpdate={onUpdate} onDelete={onDelete} currency={currency} />;
 }
 
-/* ---- Supervisor view: submit + see/edit/delete only their own entries ---- */
+/* ---- Supervisor view: "+ Add Entry", own totals, My Pending Jobs, My Entries ---- */
 function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency }) {
   const today = todayDhakaISO();
+  const [showForm, setShowForm] = useState(false);
   const [filterDate, setFilterDate] = useState(today);
-  const [form, setForm] = useState(EMPTY_ENTRY_FORM);
-  const [editingId, setEditingId] = useState(null);
 
-  // Defense in depth: RLS already restricts `planEntries` to this supervisor's
-  // own rows (see supabase/daily_plan_entries.sql), but per the requirement
-  // that the frontend must also hide unauthorized data, filter again here.
-  const myEntries = useMemo(
-    () => planEntries.filter((e) => e.user_id === profile.id),
-    [planEntries, profile.id]
-  );
+  // Defense in depth: RLS already restricts `planEntries` to this
+  // supervisor's own rows; filter again client-side too.
+  const myEntries = useMemo(() => planEntries.filter((e) => e.user_id === profile.id), [planEntries, profile.id]);
+  const myJobs = useMemo(() => jobAggregates(myEntries), [myEntries]);
   const dayEntries = useMemo(() => myEntries.filter((e) => e.plan_date === filterDate), [myEntries, filterDate]);
 
-  const totals = dayEntries.reduce((acc, e) => ({
-    order: acc.order + (Number(e.order_quantity) || 0),
-    challan: acc.challan + (Number(e.challan_quantity) || 0),
-    usd: acc.usd + (Number(e.production_usd) || 0),
-  }), { order: 0, challan: 0, usd: 0 });
-  const totalPending = pendingPcs(totals.order, totals.challan);
+  // All-time totals (not date-scoped) — pending is inherently cumulative
+  // across days, so "today only" totals would misrepresent it.
+  const totalOrder = myJobs.reduce((s, j) => s + j.order_quantity, 0);
+  const totalProduced = myEntries.reduce((s, e) => s + (Number(e.challan_quantity) || 0), 0);
+  const totalUsd = myEntries.reduce((s, e) => s + (Number(e.production_usd) || 0), 0);
+  const totalPending = myJobs.reduce((s, j) => s + j.pending, 0); // sum of PER-JOB pending, each floored at 0
 
-  function startEdit(entry) {
-    setEditingId(entry.id);
-    setForm({
-      job_no: entry.job_no || "", buyer_no: entry.buyer_no || "",
-      order_quantity: entry.order_quantity ?? "", challan_quantity: entry.challan_quantity ?? "",
-      production_usd: entry.production_usd ?? "", operator_name: entry.operator_name || "", machine_name: entry.machine_name || "",
-    });
-  }
-  function cancelEdit() { setEditingId(null); setForm(EMPTY_ENTRY_FORM); }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    const payload = {
-      order_quantity: Number(form.order_quantity) || 0,
-      challan_quantity: Number(form.challan_quantity) || 0,
-      production_usd: Number(form.production_usd) || 0,
-      job_no: form.job_no || null, buyer_no: form.buyer_no || null,
-      operator_name: form.operator_name || null, machine_name: form.machine_name || null,
-    };
-    if (editingId) {
-      await onUpdate(editingId, payload);
-      cancelEdit();
-    } else {
-      await onSubmit({ ...payload, plan_date: today }); // Date is always today — not user-editable, per spec.
-      setForm(EMPTY_ENTRY_FORM);
-    }
+  async function handleSubmit(payload) {
+    const ok = await onSubmit({ ...payload, plan_date: today });
+    if (ok) setShowForm(false);
+    return ok;
   }
 
   return (
-    <div className="flex flex-col gap-5 max-w-3xl">
+    <div className="flex flex-col gap-5 max-w-4xl">
       <Card>
-        <SectionTitle>Daily Plan — {profile.supervisor_name}</SectionTitle>
-        <p className="text-sm text-slate-500 mb-4">
-          {editingId ? "Editing an entry." : `New entries are recorded for today, ${fmtDate(today)}.`} Only you can see or change your own entries — this is enforced by the database, not just this screen.
-        </p>
-        <form onSubmit={handleSubmit} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <TextField label="Job No" value={form.job_no} onChange={(v) => setForm((f) => ({ ...f, job_no: v }))} />
-          <TextField label="Buyer No" value={form.buyer_no} onChange={(v) => setForm((f) => ({ ...f, buyer_no: v }))} />
-          <NumField label="Order Quantity" value={form.order_quantity} onChange={(v) => setForm((f) => ({ ...f, order_quantity: v }))} />
-          <NumField label="Challan Quantity" value={form.challan_quantity} onChange={(v) => setForm((f) => ({ ...f, challan_quantity: v }))} />
-          <NumField label="Production USD" value={form.production_usd} onChange={(v) => setForm((f) => ({ ...f, production_usd: v }))} step="0.01" />
-          <TextField label="Operator Name" value={form.operator_name} onChange={(v) => setForm((f) => ({ ...f, operator_name: v }))} />
-          <TextField label="Machine Name" value={form.machine_name} onChange={(v) => setForm((f) => ({ ...f, machine_name: v }))} />
-          <div className="sm:col-span-2 flex gap-2 mt-1">
-            <button type="submit" disabled={saving} className="flex-1 bg-blue-600 text-white text-sm font-semibold py-2.5 rounded-xl hover:bg-blue-700 transition disabled:opacity-50">
-              {saving ? "Saving..." : editingId ? "Update Entry" : "Add Entry"}
-            </button>
-            {editingId && <button type="button" onClick={cancelEdit} className="px-4 py-2.5 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>}
+        <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
+          <div>
+            <h2 className="text-base font-semibold text-slate-800">Daily Plan</h2>
+            <p className="text-xs text-slate-400">My Production — {profile.supervisor_name}</p>
           </div>
-        </form>
+          <button onClick={() => setShowForm((v) => !v)}
+            className="flex items-center gap-1.5 bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-blue-700 transition shrink-0">
+            <span className="text-lg leading-none">+</span> Add Entry
+          </button>
+        </div>
+
+        {showForm && (
+          <div className="mt-4 pt-4 border-t border-slate-200">
+            <EntryForm onSubmit={handleSubmit} onCancel={() => setShowForm(false)} saving={saving} myJobs={myJobs} />
+          </div>
+        )}
         {error && <div className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mt-3">{error}</div>}
-        {savedMsg && !editingId && <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mt-3">{savedMsg}</div>}
+        {savedMsg && !showForm && <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mt-3">{savedMsg}</div>}
+      </Card>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <KpiCard label="Total Production USD" value={fmtUsd(totalUsd, currency)} />
+        <KpiCard label="Total Order PCS" value={fmtInt(totalOrder)} />
+        <KpiCard label="Total Production PCS" value={fmtInt(totalProduced)} />
+        <KpiCard label="Total Pending PCS" value={fmtInt(totalPending)} tone={totalPending > 0 ? "warn" : "good"} />
+      </div>
+
+      <Card>
+        <SectionTitle>My Pending Jobs</SectionTitle>
+        {loading ? <div className="text-sm text-slate-400">Loading…</div> : <PendingJobsTable jobs={myJobs} showSupervisorCol={false} currency={currency} />}
       </Card>
 
       <Card>
@@ -1250,20 +1387,12 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
           <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)}
             className="text-sm border border-slate-200 rounded-lg px-2 py-1.5" />
         }>My Entries — {fmtDate(filterDate)}</SectionTitle>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-          <KpiCard label="Order PCS" value={fmtInt(totals.order)} />
-          <KpiCard label="Challan PCS" value={fmtInt(totals.challan)} />
-          <KpiCard label="Pending PCS" value={fmtInt(totalPending)} tone={totalPending > 0 ? "warn" : "good"} />
-          <KpiCard label="Production USD" value={fmtUsd(totals.usd, currency)} />
-        </div>
-
         {loading ? <div className="text-sm text-slate-400">Loading…</div> : dayEntries.length ? (
           <div className="overflow-x-auto rounded-lg border border-slate-200">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
-                  {["Job No", "Buyer No", "Order", "Challan", "Pending", "USD", "Operator", "Machine", ""].map((h) => (
+                  {["Date", "Job No", "Buyer No", "Order PCS", "Production PCS", "Production USD", "Operator", "Machine", ""].map((h) => (
                     <th key={h} className="text-left px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -1271,19 +1400,16 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
               <tbody>
                 {dayEntries.map((e) => (
                   <tr key={e.id} className="border-b border-slate-100 last:border-0">
+                    <td className="px-3 py-2">{fmtDate(e.plan_date)}</td>
                     <td className="px-3 py-2">{e.job_no || "—"}</td>
                     <td className="px-3 py-2">{e.buyer_no || "—"}</td>
                     <td className="px-3 py-2">{fmtInt(e.order_quantity)}</td>
                     <td className="px-3 py-2">{fmtInt(e.challan_quantity)}</td>
-                    <td className="px-3 py-2">{fmtInt(pendingPcs(e.order_quantity, e.challan_quantity))}</td>
                     <td className="px-3 py-2">{fmtUsd(e.production_usd, currency)}</td>
                     <td className="px-3 py-2">{e.operator_name || "—"}</td>
                     <td className="px-3 py-2">{e.machine_name || "—"}</td>
                     <td className="px-3 py-2">
-                      <div className="flex gap-2">
-                        <button onClick={() => startEdit(e)} className="text-xs text-blue-600 hover:underline">Edit</button>
-                        <button onClick={() => { if (window.confirm("Delete this entry?")) onDelete(e.id); }} className="text-xs text-rose-600 hover:underline">Delete</button>
-                      </div>
+                      <button onClick={() => { if (window.confirm("Delete this entry?")) onDelete(e.id); }} className="text-xs text-rose-600 hover:underline">Delete</button>
                     </td>
                   </tr>
                 ))}
@@ -1296,8 +1422,8 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
   );
 }
 
-/* ---- Admin view: all supervisors, date filter, clickable drill-down ---- */
-function AdminDailyPlanView({ planEntries, loading, saving, error, onDelete, currency }) {
+/* ---- Admin view: overall + supervisor-wise summary, drill-down, global Pending Jobs, own Add Entry ---- */
+function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, currency, supervisorDirectory }) {
   const latestEntryDate = useMemo(() => {
     const dates = uniqSorted(planEntries.map((e) => e.plan_date));
     return dates[dates.length - 1] || todayDhakaISO();
@@ -1305,47 +1431,99 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, onDelete, cur
   const [filterDate, setFilterDate] = useState(latestEntryDate);
   useEffect(() => { setFilterDate((d) => d || latestEntryDate); }, [latestEntryDate]);
   const [selectedSupervisor, setSelectedSupervisor] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [formSupervisor, setFormSupervisor] = useState(SUPERVISORS[0]);
 
   const dayEntries = useMemo(() => planEntries.filter((e) => e.plan_date === filterDate), [planEntries, filterDate]);
+  const allJobs = useMemo(() => jobAggregates(planEntries), [planEntries]); // all-time, all supervisors
 
+  // Per-supervisor summary for the selected date: that day's USD/Order/Production,
+  // plus each touched job's TRUE (all-time) pending — never "today's production" alone.
   const bySupervisor = useMemo(() => SUPERVISORS.map((name) => {
-    const entries = dayEntries.filter((e) => e.supervisor_name === name);
-    const order = entries.reduce((s, e) => s + (Number(e.order_quantity) || 0), 0);
-    const challan = entries.reduce((s, e) => s + (Number(e.challan_quantity) || 0), 0);
-    const usd = entries.reduce((s, e) => s + (Number(e.production_usd) || 0), 0);
-    return { name, entries, order, challan, usd, pending: pendingPcs(order, challan) };
-  }), [dayEntries]);
+    const todays = dayEntries.filter((e) => e.supervisor_name === name);
+    const jobNosToday = uniqSorted(todays.map((e) => e.job_no).filter(Boolean));
+    const pending = jobNosToday.reduce((s, jn) => s + (allJobs.find((j) => j.job_no === jn)?.pending || 0), 0);
+    return {
+      name,
+      usd: todays.reduce((s, e) => s + (Number(e.production_usd) || 0), 0),
+      order: todays.reduce((s, e) => s + (Number(e.order_quantity) || 0), 0),
+      produced: todays.reduce((s, e) => s + (Number(e.challan_quantity) || 0), 0),
+      pending,
+      jobCount: new Set(todays.map((e) => e.job_no).filter(Boolean)).size,
+      entries: todays,
+    };
+  }), [dayEntries, allJobs]);
 
   const grand = bySupervisor.reduce((acc, s) => ({
-    order: acc.order + s.order, challan: acc.challan + s.challan, usd: acc.usd + s.usd,
-  }), { order: 0, challan: 0, usd: 0 });
-  const grandPending = pendingPcs(grand.order, grand.challan);
+    usd: acc.usd + s.usd, order: acc.order + s.order, produced: acc.produced + s.produced, pending: acc.pending + s.pending,
+  }), { usd: 0, order: 0, produced: 0, pending: 0 });
 
   const drilldown = selectedSupervisor ? bySupervisor.find((s) => s.name === selectedSupervisor) : null;
+
+  async function handleSubmit(payload) {
+    const target = supervisorDirectory.find((s) => s.supervisor_name === formSupervisor);
+    if (!target) return false; // shouldn't happen — button below only lists linked supervisors
+    const ok = await onSubmit({ ...payload, plan_date: todayDhakaISO() }, { user_id: target.id, supervisor_name: formSupervisor });
+    if (ok) setShowForm(false);
+    return ok;
+  }
 
   return (
     <div className="flex flex-col gap-5">
       <Card>
-        <SectionTitle right={
-          <input type="date" value={filterDate} onChange={(e) => { setFilterDate(e.target.value); setSelectedSupervisor(null); }}
-            className="text-sm border border-slate-200 rounded-lg px-2 py-1.5" />
-        }>Daily Plan — All Supervisors — {fmtDate(filterDate)}</SectionTitle>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-          <KpiCard label="Total Production USD" value={fmtUsd(grand.usd, currency)} />
-          <KpiCard label="Total Order PCS" value={fmtInt(grand.order)} />
-          <KpiCard label="Total Challan PCS" value={fmtInt(grand.challan)} />
-          <KpiCard label="Total Pending PCS" value={fmtInt(grandPending)} tone={grandPending > 0 ? "warn" : "good"} />
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-800">Daily Plan — All Supervisors</h2>
+            <p className="text-xs text-slate-400">Admin view</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input type="date" value={filterDate} onChange={(e) => { setFilterDate(e.target.value); setSelectedSupervisor(null); }}
+              className="text-sm border border-slate-200 rounded-lg px-2 py-1.5" />
+            {supervisorDirectory.length > 0 && (
+              <button onClick={() => setShowForm((v) => !v)}
+                className="flex items-center gap-1.5 bg-blue-600 text-white text-sm font-semibold px-4 py-2 rounded-xl hover:bg-blue-700 transition shrink-0">
+                <span className="text-lg leading-none">+</span> Add Entry
+              </button>
+            )}
+          </div>
         </div>
 
-        {error && <div className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-3">{error}</div>}
+        {showForm && (
+          <div className="mt-4 pt-4 border-t border-slate-200 max-w-2xl">
+            <EntryForm onSubmit={handleSubmit} onCancel={() => setShowForm(false)} saving={saving}
+              myJobs={jobAggregates(planEntries.filter((e) => e.supervisor_name === formSupervisor))}
+              extraFields={
+                <div className="flex flex-col gap-1 sm:col-span-2">
+                  <label className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Supervisor</label>
+                  <select value={formSupervisor} onChange={(e) => setFormSupervisor(e.target.value)}
+                    className="text-sm border border-slate-200 rounded-lg px-3 py-2">
+                    {supervisorDirectory.map((s) => <option key={s.id} value={s.supervisor_name}>{s.supervisor_name}</option>)}
+                  </select>
+                </div>
+              } />
+          </div>
+        )}
+        {supervisorDirectory.length === 0 && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3">
+            No supervisor accounts are linked yet — link one in User Management to enable Admin "+ Add Entry".
+          </p>
+        )}
+        {error && <div className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mt-3">{error}</div>}
+        {savedMsg && !showForm && <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mt-3">{savedMsg}</div>}
 
-        {loading ? <div className="text-sm text-slate-400">Loading…</div> : (
-          <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+          <KpiCard label="Total Production USD" value={fmtUsd(grand.usd, currency)} />
+          <KpiCard label="Total Order PCS" value={fmtInt(grand.order)} />
+          <KpiCard label="Total Production PCS" value={fmtInt(grand.produced)} />
+          <KpiCard label="Total Pending PCS" value={fmtInt(grand.pending)} tone={grand.pending > 0 ? "warn" : "good"} />
+        </div>
+
+        {loading ? <div className="text-sm text-slate-400 mt-4">Loading…</div> : (
+          <div className="overflow-x-auto rounded-lg border border-slate-200 mt-4">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-200">
-                  {["Supervisor", "Production USD", "Order PCS", "Challan PCS", "Pending PCS", "Entries"].map((h) => (
+                  {["Supervisor", "Production USD", "Order PCS", "Production PCS", "Pending PCS", "Jobs"].map((h) => (
                     <th key={h} className="text-left px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -1357,9 +1535,9 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, onDelete, cur
                     <td className="px-3 py-2 font-medium text-blue-700 hover:underline">{s.name}</td>
                     <td className="px-3 py-2">{fmtUsd(s.usd, currency)}</td>
                     <td className="px-3 py-2">{fmtInt(s.order)}</td>
-                    <td className="px-3 py-2">{fmtInt(s.challan)}</td>
+                    <td className="px-3 py-2">{fmtInt(s.produced)}</td>
                     <td className="px-3 py-2">{fmtInt(s.pending)}</td>
-                    <td className="px-3 py-2 text-slate-400">{s.entries.length}</td>
+                    <td className="px-3 py-2 text-slate-400">{s.jobCount}</td>
                   </tr>
                 ))}
               </tbody>
@@ -1378,7 +1556,7 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, onDelete, cur
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200">
-                    {["Job No", "Buyer No", "Order", "Challan", "Pending", "USD", "Operator", "Machine", ""].map((h) => (
+                    {["Job No", "Buyer No", "Order PCS", "Production PCS", "Production USD", "Operator", "Machine", ""].map((h) => (
                       <th key={h} className="text-left px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -1390,7 +1568,6 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, onDelete, cur
                       <td className="px-3 py-2">{e.buyer_no || "—"}</td>
                       <td className="px-3 py-2">{fmtInt(e.order_quantity)}</td>
                       <td className="px-3 py-2">{fmtInt(e.challan_quantity)}</td>
-                      <td className="px-3 py-2">{fmtInt(pendingPcs(e.order_quantity, e.challan_quantity))}</td>
                       <td className="px-3 py-2">{fmtUsd(e.production_usd, currency)}</td>
                       <td className="px-3 py-2">{e.operator_name || "—"}</td>
                       <td className="px-3 py-2">{e.machine_name || "—"}</td>
@@ -1405,6 +1582,11 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, onDelete, cur
           ) : <EmptyState text="No entries" />}
         </Card>
       )}
+
+      <Card>
+        <SectionTitle>Pending Jobs — All Supervisors (all dates)</SectionTitle>
+        {loading ? <div className="text-sm text-slate-400">Loading…</div> : <PendingJobsTable jobs={allJobs} showSupervisorCol currency={currency} />}
+      </Card>
     </div>
   );
 }

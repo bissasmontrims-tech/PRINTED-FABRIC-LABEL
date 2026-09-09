@@ -176,21 +176,37 @@ console) via `_runDateParserSelfTest()` in `src/lib/dateUtils.js`. Covers:
 
 Each supervisor — Aslam, Murad, Biplob, Selim Reza, Shahjahan — has their own
 Supabase Auth login (`role = 'supervisor'` in `profiles`, linked to their
-name via `profiles.supervisor_name`). Run `supabase/daily_plan_entries.sql`
-once in the SQL Editor (after `schema.sql`) to create the `daily_plan_entries`
-table and its RLS policies.
+name via `profiles.supervisor_name`). Run, in order: `supabase/schema.sql`,
+`supabase/daily_plan_entries.sql`, then `supabase/daily_plan_job_index.sql`.
 
-**Supervisor view**: a form (Job No, Buyer No, Order Quantity, Challan
-Quantity, Production USD, Operator Name, Machine Name) submits a new entry
-dated automatically to today — date, supervisor name, and `user_id` are never
-taken from the browser, only from the logged-in session. Below it, a table of
-their own entries for a chosen date, with per-day totals and **Pending PCS**
-(`Order − Challan`, floored at 0). They can edit/delete their own entries.
+**"Production Quantity" vs. the database column**: the UI always says
+"Production Quantity" (renamed from "Challan Quantity"); the underlying
+column is still named `challan_quantity` so existing data is untouched — this
+is a label-only change everywhere in the app.
 
-**Admin view**: a date-filtered summary across all 5 supervisors (Production
-USD, Order PCS, Challan PCS, Pending PCS, entry count) with totals at the
-top; clicking a supervisor's row drills into their individual entries for
-that date, editable/deletable by Admin.
+**Supervisor view**: a prominent **+ Add Entry** button opens the entry form
+(Job No, Buyer No, Order Quantity, Production Quantity, Production USD,
+Operator Name, Machine Name) — date, supervisor name, and `user_id` are never
+taken from the browser, only from the logged-in session. All-time KPI totals
+(Production USD / Order PCS / Production PCS / Pending PCS), a **My Pending
+Jobs** table, and a date-filtered **My Entries** table follow.
+
+**Job-wise pending, not just today's number**: Pending is never stored — it's
+always computed as `Order Quantity − SUM(all Production Quantity entries for
+that Job No)`, floored at 0. The same Job No can be entered again on a later
+day if it isn't finished yet (this is normal, not a duplicate); once
+cumulative production reaches the order quantity, the job is `Completed` and
+drops out of the Pending Jobs list automatically. Trying to add production to
+an already-completed job is blocked client-side with *"This Job is already
+completed."* — Admin's own "+ Add Entry" isn't subject to that same block, so
+Admin can still add to a job if genuinely needed.
+
+**Admin view**: overall totals, a per-supervisor summary table (Production
+USD / Order PCS / Production PCS / Pending PCS / Job count) for the selected
+date, a clickable drill-down into that supervisor's entries, its own **+ Add
+Entry** (with a supervisor picker, looked up against real linked accounts —
+never the admin's own identity), and a global, all-dates **Pending Jobs**
+table across every supervisor.
 
 **Security**: enforced by Postgres RLS using `auth.uid()`, not just the UI —
 a supervisor's `SELECT`/`INSERT`/`UPDATE`/`DELETE` are all scoped to
