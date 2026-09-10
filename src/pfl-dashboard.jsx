@@ -244,13 +244,20 @@ function DataTable({ columns, rows, pageSize = 12, initialSort }) {
   );
 }
 
-function ChartCard({ title, children, height = 260 }) {
+function ChartCard({ title, children, height = 260, scroll = false, minWidth = 0 }) {
+  const chart = (
+    <div style={{ width: "100%", height }}>
+      <ResponsiveContainer>{children}</ResponsiveContainer>
+    </div>
+  );
   return (
     <Card>
       <div className="text-sm font-semibold text-slate-700 mb-3">{title}</div>
-      <div style={{ width: "100%", height }}>
-        <ResponsiveContainer>{children}</ResponsiveContainer>
-      </div>
+      {scroll ? (
+        <div className="w-full overflow-x-auto overflow-y-hidden">
+          <div style={{ minWidth: minWidth || "100%" }}>{chart}</div>
+        </div>
+      ) : chart}
     </Card>
   );
 }
@@ -1112,7 +1119,7 @@ function OverviewPage({ kpi, settings, alerts, operatorRows, below50kPcsOps, bel
             <LineChart data={dailySeries}>
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(d) => d.slice(5)} />
-              <YAxis tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => fmtUsd(v)} />
               <Tooltip formatter={(v) => fmtUsd(v)} labelFormatter={fmtDate} />
               <Line type="monotone" dataKey="usd" name="Actual USD" stroke={COLORS[0]} strokeWidth={2} dot={false} />
               <Line type="monotone" dataKey="target" name="Target USD" stroke={COLORS[4]} strokeWidth={2} strokeDasharray="4 3" dot={false} />
@@ -1121,14 +1128,14 @@ function OverviewPage({ kpi, settings, alerts, operatorRows, below50kPcsOps, bel
         </ChartCard>
         <ChartCard title="Production USD by MC Type">
           {mcTypeRows.length ? (
-            <BarChart data={mcTypeRows}>
+            <BarChart data={mcTypeRows} margin={{ top: 28, right: 18, left: 8, bottom: 8 }}>
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis dataKey="mcType" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => fmtUsd(v)} />
               <Tooltip formatter={(v) => fmtUsd(v)} />
               <Bar dataKey="usd" name="USD" radius={[4, 4, 0, 0]}>
                 {mcTypeRows.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                <LabelList dataKey="usd" position="top" formatter={(v) => fmtUsd(v)} style={{ fontSize: 11, fill: INK }} />
+                <LabelList dataKey="usd" position="top" offset={8} formatter={(v) => fmtUsd(v)} style={{ fontSize: 11, fontWeight: 700, fill: INK }} />
               </Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
@@ -1186,7 +1193,11 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
         <KpiCard label="Achievement %" value={fmtPct(series.reduce((s, r) => s + r.usd, 0) / (series.reduce((s, r) => s + r.target, 0) || 1) * 100)} />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ChartCard title={`${tab[0].toUpperCase() + tab.slice(1)} PCS Trend`}>
+        <ChartCard
+          title={`${tab[0].toUpperCase() + tab.slice(1)} PCS Trend`}
+          scroll={tab === "daily" && series.length > 7}
+          minWidth={tab === "daily" ? Math.max(720, series.length * 92) : 0}
+        >
           {series.length ? (
             <AreaChart data={series} margin={{ top: 40, right: 18, left: 8, bottom: 18 }}>
               <defs>
@@ -1198,15 +1209,18 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis
                 dataKey={xKey}
-                interval={tab === "daily" && series.length > 10 ? Math.ceil(series.length / 10) - 1 : 0}
-                angle={tab === "daily" ? -35 : 0}
-                textAnchor={tab === "daily" ? "end" : "middle"}
-                height={tab === "daily" ? 58 : 32}
-                tickMargin={tab === "daily" ? 12 : 8}
-                tick={{ fontSize: 10, fill: MUTE }}
+                interval={0}
+                angle={0}
+                textAnchor="middle"
+                height={tab === "daily" ? 34 : 32}
+                tickMargin={8}
+                tick={{ fontSize: tab === "daily" ? 10 : 10, fill: MUTE }}
                 tickFormatter={(v) => tab === "daily" ? v : v}
               />
-              <YAxis tick={{ fontSize: 11, fill: MUTE }} />
+              <YAxis
+                tick={{ fontSize: 11, fill: MUTE }}
+                domain={[0, (dataMax) => Math.max(1, dataMax * 1.14)]}
+              />
               <Tooltip formatter={(v) => fmtInt(v)} />
               <Area
                 type="monotone"
@@ -1229,40 +1243,47 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
             </AreaChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
-        <ChartCard title={`${tab[0].toUpperCase() + tab.slice(1)} Target vs Actual`}>
+        <ChartCard
+          title={`${tab[0].toUpperCase() + tab.slice(1)} Target vs Actual`}
+          scroll={tab === "daily" && series.length > 7}
+          minWidth={tab === "daily" ? Math.max(720, series.length * 92) : 0}
+        >
           {series.length ? (
-            <BarChart data={series} margin={{ top: 18, right: 18, left: 8, bottom: 18 }} barGap={4}>
+            <BarChart data={series} margin={{ top: 8, right: 18, left: 8, bottom: 8 }} barGap={8}>
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis
                 dataKey={xKey}
-                interval={tab === "daily" && series.length > 10 ? Math.ceil(series.length / 10) - 1 : 0}
-                angle={tab === "daily" ? -35 : 0}
-                textAnchor={tab === "daily" ? "end" : "middle"}
-                height={tab === "daily" ? 58 : 32}
-                tickMargin={tab === "daily" ? 12 : 8}
-                tick={{ fontSize: 10, fill: MUTE }}
+                interval={0}
+                angle={0}
+                textAnchor="middle"
+                height={tab === "daily" ? 34 : 32}
+                tickMargin={8}
+                tick={{ fontSize: tab === "daily" ? 10 : 10, fill: MUTE }}
               />
-              <YAxis tick={{ fontSize: 11, fill: MUTE }} />
+              <YAxis
+                tick={{ fontSize: 11, fill: MUTE }}
+                domain={[0, (dataMax) => Math.max(1, dataMax * 1.08)]}
+              />
               <Tooltip formatter={(v) => fmtUsd(v)} />
               <Legend />
               <Bar dataKey="target" name="Target" fill="#cbd5e1" radius={[5, 5, 0, 0]}>
                 <LabelList
                   dataKey="target"
                   position="insideCenter"
-                  angle={-90}
+                  angle={0}
                   offset={0}
                   formatter={(v) => fmtUsd(v)}
-                  style={{ fontSize: 9, fontWeight: 700, fill: INK }}
+                  style={{ fontSize: 11, fontWeight: 800, fill: INK }}
                 />
               </Bar>
               <Bar dataKey="usd" name="Actual" fill={COLORS[0]} radius={[5, 5, 0, 0]}>
                 <LabelList
                   dataKey="usd"
                   position="insideCenter"
-                  angle={-90}
+                  angle={0}
                   offset={0}
                   formatter={(v) => fmtUsd(v)}
-                  style={{ fontSize: 9, fontWeight: 700, fill: "#fff" }}
+                  style={{ fontSize: 11, fontWeight: 800, fill: "#fff" }}
                 />
               </Bar>
             </BarChart>
