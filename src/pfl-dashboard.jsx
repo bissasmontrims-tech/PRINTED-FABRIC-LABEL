@@ -1162,28 +1162,46 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ChartCard title={`${tab[0].toUpperCase() + tab.slice(1)} PCS Trend`}>
           {series.length ? (
-            <AreaChart data={series}>
+            <AreaChart data={series} margin={{ top: 24, right: 12, left: 4, bottom: 8 }}>
               <CartesianGrid stroke={LINE} vertical={false} />
-              <XAxis dataKey={xKey} tick={{ fontSize: 11 }} />
+              <XAxis dataKey={xKey} tick={{ fontSize: 11 }} interval={0} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip formatter={(v) => fmtInt(v)} />
-              <Area type="monotone" dataKey="pcs" stroke={COLORS[1]} fill={COLORS[1]} fillOpacity={0.15} />
+              <Area type="monotone" dataKey="pcs" stroke={COLORS[1]} fill={COLORS[1]} fillOpacity={0.15}>
+                <LabelList
+                  dataKey="pcs"
+                  position="top"
+                  offset={8}
+                  formatter={(v) => fmtInt(v)}
+                  style={{ fontSize: 10, fill: INK, fontWeight: 600 }}
+                />
+              </Area>
             </AreaChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
         <ChartCard title={`${tab[0].toUpperCase() + tab.slice(1)} Target vs Actual`}>
           {series.length ? (
-            <BarChart data={series}>
+            <BarChart data={series} margin={{ top: 12, right: 12, left: 4, bottom: 8 }} barCategoryGap="18%">
               <CartesianGrid stroke={LINE} vertical={false} />
-              <XAxis dataKey={xKey} tick={{ fontSize: 11 }} />
+              <XAxis dataKey={xKey} tick={{ fontSize: 11 }} interval={0} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip formatter={(v) => fmtUsd(v)} />
               <Legend />
               <Bar dataKey="target" name="Target" fill="#cbd5e1" radius={[4, 4, 0, 0]}>
-                <LabelList dataKey="target" position="top" formatter={(v) => fmtUsd(v)} style={{ fontSize: 10, fill: MUTE }} />
+                <LabelList
+                  dataKey="target"
+                  position="inside"
+                  formatter={(v) => fmtUsd(v)}
+                  style={{ fontSize: 10, fill: "#334155", fontWeight: 600 }}
+                />
               </Bar>
               <Bar dataKey="usd" name="Actual" fill={COLORS[0]} radius={[4, 4, 0, 0]}>
-                <LabelList dataKey="usd" position="top" formatter={(v) => fmtUsd(v)} style={{ fontSize: 10, fill: INK }} />
+                <LabelList
+                  dataKey="usd"
+                  position="inside"
+                  formatter={(v) => fmtUsd(v)}
+                  style={{ fontSize: 10, fill: "#ffffff", fontWeight: 600 }}
+                />
               </Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
@@ -1488,12 +1506,13 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
 
 /* ---- Admin view: overall + supervisor-wise summary, drill-down, global Pending Jobs, own Add Entry ---- */
 function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, currency, supervisorDirectory, readOnly = false, title = "Admin view" }) {
-  const latestEntryDate = useMemo(() => {
-    const dates = uniqSorted(planEntries.map((e) => e.plan_date));
-    return dates[dates.length - 1] || todayDhakaISO();
-  }, [planEntries]);
-  const [filterDate, setFilterDate] = useState(latestEntryDate);
-  useEffect(() => { setFilterDate((d) => d || latestEntryDate); }, [latestEntryDate]);
+  // Daily Plan always opens on today's Bangladesh calendar date.
+  // It must not jump back to the last date that happens to exist in the database.
+  const today = todayDhakaISO();
+  const [filterDate, setFilterDate] = useState(today);
+  useEffect(() => {
+    setFilterDate(todayDhakaISO());
+  }, []);
   const [selectedSupervisor, setSelectedSupervisor] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [formSupervisor, setFormSupervisor] = useState(SUPERVISORS[0]);
