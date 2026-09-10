@@ -1162,7 +1162,7 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ChartCard title={`${tab[0].toUpperCase() + tab.slice(1)} PCS Trend`}>
           {series.length ? (
-            <AreaChart data={series} margin={{ top: 24, right: 18, left: 8, bottom: 12 }}>
+            <AreaChart data={series} margin={{ top: 40, right: 18, left: 8, bottom: 18 }}>
               <defs>
                 <linearGradient id="dailyPcsFill" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={COLORS[1]} stopOpacity={0.22} />
@@ -1172,10 +1172,11 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis
                 dataKey={xKey}
-                interval={0}
-                angle={0}
-                height={32}
-                tickMargin={8}
+                interval={tab === "daily" && series.length > 10 ? Math.ceil(series.length / 10) - 1 : 0}
+                angle={tab === "daily" ? -35 : 0}
+                textAnchor={tab === "daily" ? "end" : "middle"}
+                height={tab === "daily" ? 58 : 32}
+                tickMargin={tab === "daily" ? 12 : 8}
                 tick={{ fontSize: 10, fill: MUTE }}
                 tickFormatter={(v) => tab === "daily" ? v : v}
               />
@@ -1194,8 +1195,9 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
                   dataKey="pcs"
                   position="top"
                   offset={8}
+                  angle={0}
                   formatter={(v) => fmtInt(v)}
-                  style={{ fontSize: 10, fontWeight: 600, fill: INK }}
+                  style={{ fontSize: 10, fontWeight: 700, fill: INK }}
                 />
               </Area>
             </AreaChart>
@@ -1203,14 +1205,15 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
         </ChartCard>
         <ChartCard title={`${tab[0].toUpperCase() + tab.slice(1)} Target vs Actual`}>
           {series.length ? (
-            <BarChart data={series} margin={{ top: 24, right: 18, left: 8, bottom: 12 }} barGap={4}>
+            <BarChart data={series} margin={{ top: 18, right: 18, left: 8, bottom: 18 }} barGap={4}>
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis
                 dataKey={xKey}
-                interval={0}
-                angle={0}
-                height={32}
-                tickMargin={8}
+                interval={tab === "daily" && series.length > 10 ? Math.ceil(series.length / 10) - 1 : 0}
+                angle={tab === "daily" ? -35 : 0}
+                textAnchor={tab === "daily" ? "end" : "middle"}
+                height={tab === "daily" ? 58 : 32}
+                tickMargin={tab === "daily" ? 12 : 8}
                 tick={{ fontSize: 10, fill: MUTE }}
               />
               <YAxis tick={{ fontSize: 11, fill: MUTE }} />
@@ -1219,19 +1222,21 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
               <Bar dataKey="target" name="Target" fill="#cbd5e1" radius={[5, 5, 0, 0]}>
                 <LabelList
                   dataKey="target"
-                  position="insideTop"
-                  offset={8}
+                  position="insideCenter"
+                  angle={-90}
+                  offset={0}
                   formatter={(v) => fmtUsd(v)}
-                  style={{ fontSize: 10, fontWeight: 600, fill: INK }}
+                  style={{ fontSize: 9, fontWeight: 700, fill: INK }}
                 />
               </Bar>
               <Bar dataKey="usd" name="Actual" fill={COLORS[0]} radius={[5, 5, 0, 0]}>
                 <LabelList
                   dataKey="usd"
-                  position="insideTop"
-                  offset={8}
+                  position="insideCenter"
+                  angle={-90}
+                  offset={0}
                   formatter={(v) => fmtUsd(v)}
-                  style={{ fontSize: 10, fontWeight: 600, fill: "#fff" }}
+                  style={{ fontSize: 9, fontWeight: 700, fill: "#fff" }}
                 />
               </Bar>
             </BarChart>
@@ -1541,8 +1546,11 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
     const dates = uniqSorted(planEntries.map((e) => e.plan_date));
     return dates[dates.length - 1] || todayDhakaISO();
   }, [planEntries]);
-  const [filterDate, setFilterDate] = useState(latestEntryDate);
-  useEffect(() => { setFilterDate((d) => d || latestEntryDate); }, [latestEntryDate]);
+  // Daily Plan always opens on today (Bangladesh time), not the latest saved entry date.
+  const [filterDate, setFilterDate] = useState(() => todayDhakaISO());
+  useEffect(() => {
+    if (!filterDate) setFilterDate(todayDhakaISO());
+  }, [filterDate]);
   const [selectedSupervisor, setSelectedSupervisor] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [formSupervisor, setFormSupervisor] = useState(SUPERVISORS[0]);
