@@ -89,6 +89,17 @@ export function parseReportDate(value) {
     return isValidYMD(y, m, d) ? `${y}-${pad2(m)}-${pad2(d)}` : null;
   }
 
+  // Common Excel display strings such as 08-Sep-2026 / 8-Sep-26.
+  const mon = s.match(/^(\d{1,2})[-\/\s]([A-Za-z]{3,9})[-\/\s](\d{2,4})$/);
+  if (mon) {
+    const months = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+    const m = months[mon[2].slice(0,3).toLowerCase()];
+    let y = Number(mon[3]);
+    if (y < 100) y += y >= 70 ? 1900 : 2000;
+    const d = Number(mon[1]);
+    if (m && isValidYMD(y, m, d)) return `${y}-${pad2(m)}-${pad2(d)}`;
+  }
+
   // Last resort: numeric string that's actually an Excel serial (some CSV
   // exports of Excel files leave serials as plain text).
   if (/^\d+(\.\d+)?$/.test(s)) return excelSerialToISO(Number(s));

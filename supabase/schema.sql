@@ -150,3 +150,7 @@ create policy "production_data: manager update" on public.production_data
 -- End of schema. Next step: create your first Admin — see README.md
 -- "How to create the first Admin".
 -- ============================================================================
+
+-- IMPORTANT: duplicate-looking production rows are valid and must never be skipped.
+-- If this legacy unique index exists in an already-created database, remove it once:
+-- DROP INDEX IF EXISTS public.production_data_unique_key;

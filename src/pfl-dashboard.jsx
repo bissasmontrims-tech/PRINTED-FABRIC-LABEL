@@ -712,7 +712,20 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   /* ---------- import handling ---------- */
   const REQUIRED_COLS = ["date", "mcType", "shift", "jobNumber", "pcs", "usd", "operator", "machine"];
   function normalizeRow(raw) {
-    const get = (...keys) => { for (const k of keys) { if (raw[k] !== undefined) return raw[k]; } return undefined; };
+    // Excel headers often differ only by punctuation, extra spaces, or case
+    // (e.g. "Machine No." vs "Machine No"). Resolve headers by a canonical
+    // form so valid rows are never rejected just because the column label changed.
+    const canon = (v) => String(v ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const rawKeys = Object.keys(raw);
+    const get = (...keys) => {
+      for (const k of keys) {
+        if (raw[k] !== undefined) return raw[k];
+        const ck = canon(k);
+        const actual = rawKeys.find((rk) => canon(rk) === ck);
+        if (actual !== undefined && raw[actual] !== undefined) return raw[actual];
+      }
+      return undefined;
+    };
     // Strips thousands separators / currency symbols before Number() conversion
     // so values like "125,500" or "$1,250.00" don't parse as NaN.
     const toNum = (v) => {
@@ -748,15 +761,32 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   // Step 1: parse + validate only. Nothing is saved yet — this just builds
   // the preview the user reviews before clicking "Submit to Database".
   function processImportedRows(objs) {
+    // IMPORTANT: every Excel row is preserved. There is deliberately NO
+    // duplicate detection/deduplication here. If Excel contains two identical
+    // rows, both rows go to the preview and both are submitted.
     let invalid = 0, withinBatchDupes = 0, emptyOperator = 0, invalidDate = 0;
-    const seen = new Set();
     const clean = [];
+    let lastDate = null;
+    let lastOperator = null;
+
     for (const o of objs) {
       const row = normalizeRow(o);
-      if (!row.operator) { emptyOperator++; invalid++; continue; }
-      if (!row.date) { invalidDate++; invalid++; continue; } // row.date is a validated "YYYY-MM-DD" string or null
-      if (isNaN(row.pcs) || isNaN(row.usd)) { invalid++; continue; }
-      const sig = `${row.date}|${row.operator}|${row.jobNumber}|${row.machine}|${row.shift}`;
+
+      // Excel sheets commonly use a merged/filled-down Date or Operator cell.
+      // Carry the previous non-empty value forward so those rows are not lost.
+      if (!row.date && lastDate) row.date = lastDate;
+      if (!row.operator && lastOperator) row.operator = lastOperator;
+      if (row.date) lastDate = row.date;
+      if (row.operator) lastOperator = row.operator;
+
+      // Numeric production fields are intentionally defaulted to 0 by
+      // normalizeRow; no row is rejected for a blank numeric cell.
+      if (!row.operator) emptyOperator++;
+      if (!row.date) invalidDate++;
+      if (!row.operator || !row.date) {
+        invalid++;
+        continue;
+      }
       clean.push(row);
     }
     setPreviewRows(clean);
@@ -767,10 +797,8 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   }
 
   // Step 2: user clicks "Submit to Database" — this is the only place that
-  // actually writes to Supabase. Uses upsert + the DB's unique index
-  // (report_date, job_number, machine_no, operator_name, shift) with
-  // ignoreDuplicates so cross-submission duplicates are rejected server-side
-  // rather than silently duplicated, per requirement #6.
+  // actually writes to Supabase. Plain INSERT is used: no upsert and no
+  // duplicate filtering. Every preview row is submitted as a separate row.
   async function submitPreviewToDatabase() {
     if (!previewRows || !previewRows.length) return;
 
@@ -798,7 +826,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     }
 
     const inserted = data.length;
-    const dupesSkipped = payload.length - inserted;
+    const dupesSkipped = 0; // duplicates are NEVER skipped by the app
     const reportDates = uniqSorted(previewRows.map((r) => r.date));
     const label = reportDates.length === 1 ? `${formatDisplayDate(reportDates[0])} report` : `${reportDates.length} dates`;
 
@@ -806,10 +834,8 @@ export default function PFLDashboard({ session, profile, onLogout }) {
       stage: "done",
       total: payload.length,
       valid: inserted,
-      dupes: dupesSkipped,
-      message: dupesSkipped > 0 && inserted === 0
-        ? "Duplicate data detected. Existing data was not duplicated."
-        : `${label} successfully saved to database.`,
+      dupes: 0,
+      message: `${label} successfully saved to database. All submitted rows were kept; no duplicate filtering was applied.`,
     });
     setPreviewRows(null);
     await fetchFromDatabase(); // refresh dashboard from the database (source of truth)
