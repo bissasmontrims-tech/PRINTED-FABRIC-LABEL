@@ -319,7 +319,7 @@ function dbRowToRecord(row) {
 }
 function recordToDbRow(rec, userId) {
   return {
-    report_date: rec.date,
+    report_date: rec.date || null,
     mc_type: rec.mcType || null,
     shift: rec.shift || null,
     job_number: rec.jobNumber != null ? String(rec.jobNumber) : null,
@@ -329,7 +329,7 @@ function recordToDbRow(rec, userId) {
     price_per_dz: rec.priceDz ?? null,
     buyer_name: rec.buyer || null,
     customer_name: rec.customer || null,
-    operator_name: rec.operator,
+    operator_name: rec.operator || null,
     machine_no: rec.machine != null ? String(rec.machine) : null,
     target_usd: rec.target ?? null,
     dhu_percent: rec.dhu ?? null,
@@ -367,7 +367,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   });
   const [selectedOperator, setSelectedOperator] = useState("");
   const [importSummary, setImportSummary] = useState(null);
-  const [previewRows, setPreviewRows] = useState(null); // parsed+validated rows awaiting Submit
+  const [previewRows, setPreviewRows] = useState(null); // parsed rows awaiting Submit (no rows are rejected)
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -771,7 +771,11 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     // IMPORTANT: every Excel row is preserved. There is deliberately NO
     // duplicate detection/deduplication here. If Excel contains two identical
     // rows, both rows go to the preview and both are submitted.
-    let invalid = 0, withinBatchDupes = 0, emptyOperator = 0, invalidDate = 0;
+    // IMPORTANT: every Excel/CSV row is preserved exactly once.
+    // No invalid-row rejection and no duplicate detection are performed.
+    // If Date/Operator is blank, the blank value is kept; the database schema
+    // must allow NULL for those fields (see supabase/allow_blank_import_rows.sql).
+    let emptyOperator = 0, emptyDate = 0;
     const clean = [];
     let lastDate = null;
     let lastOperator = null;
@@ -779,27 +783,22 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     for (const o of objs) {
       const row = normalizeRow(o);
 
-      // Excel sheets commonly use a merged/filled-down Date or Operator cell.
-      // Carry the previous non-empty value forward so those rows are not lost.
+      // For filled-down/merged Excel cells, carry the previous value forward.
       if (!row.date && lastDate) row.date = lastDate;
       if (!row.operator && lastOperator) row.operator = lastOperator;
       if (row.date) lastDate = row.date;
       if (row.operator) lastOperator = row.operator;
 
-      // Numeric production fields are intentionally defaulted to 0 by
-      // normalizeRow; no row is rejected for a blank numeric cell.
       if (!row.operator) emptyOperator++;
-      if (!row.date) invalidDate++;
-      if (!row.operator || !row.date) {
-        invalid++;
-        continue;
-      }
+      if (!row.date) emptyDate++;
       clean.push(row);
     }
+
     setPreviewRows(clean);
     setImportSummary({
       stage: "preview",
-      total: objs.length, valid: clean.length, invalid, withinBatchDupes, emptyOperator, invalidDate,
+      total: objs.length, valid: clean.length,
+      emptyOperator, emptyDate, withinBatchDupes: 0, dupes: 0,
     });
   }
 
@@ -1135,7 +1134,7 @@ function OverviewPage({ kpi, settings, alerts, operatorRows, below50kPcsOps, bel
               <Tooltip formatter={(v) => fmtUsd(v)} />
               <Bar dataKey="usd" name="USD" radius={[4, 4, 0, 0]}>
                 {mcTypeRows.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                <LabelList dataKey="usd" position="top" offset={8} formatter={(v) => fmtUsd(v)} style={{ fontSize: 11, fontWeight: 700, fill: INK }} />
+                <LabelList dataKey="usd" position="insideCenter" angle={-90} offset={0} formatter={(v) => fmtUsd(v)} style={{ fontSize: 10, fontWeight: 700, fill: "#fff" }} />
               </Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
@@ -1195,8 +1194,8 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <ChartCard
           title={`${tab[0].toUpperCase() + tab.slice(1)} PCS Trend`}
-          scroll={tab === "daily" && series.length > 7}
-          minWidth={tab === "daily" ? Math.max(720, series.length * 92) : 0}
+          scroll={false}
+          minWidth={0}
         >
           {series.length ? (
             <AreaChart data={series} margin={{ top: 40, right: 18, left: 8, bottom: 18 }}>
@@ -1209,7 +1208,7 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis
                 dataKey={xKey}
-                interval={0}
+                interval={series.length > 12 ? Math.ceil(series.length / 10) - 1 : 0}
                 angle={0}
                 textAnchor="middle"
                 height={tab === "daily" ? 34 : 32}
@@ -1245,15 +1244,15 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
         </ChartCard>
         <ChartCard
           title={`${tab[0].toUpperCase() + tab.slice(1)} Target vs Actual`}
-          scroll={tab === "daily" && series.length > 7}
-          minWidth={tab === "daily" ? Math.max(720, series.length * 92) : 0}
+          scroll={false}
+          minWidth={0}
         >
           {series.length ? (
             <BarChart data={series} margin={{ top: 8, right: 18, left: 8, bottom: 8 }} barGap={8}>
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis
                 dataKey={xKey}
-                interval={0}
+                interval={series.length > 12 ? Math.ceil(series.length / 10) - 1 : 0}
                 angle={0}
                 textAnchor="middle"
                 height={tab === "daily" ? 34 : 32}
@@ -1270,20 +1269,20 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
                 <LabelList
                   dataKey="target"
                   position="insideCenter"
-                  angle={0}
+                  angle={-90}
                   offset={0}
                   formatter={(v) => fmtUsd(v)}
-                  style={{ fontSize: 11, fontWeight: 800, fill: INK }}
+                  style={{ fontSize: 10, fontWeight: 800, fill: INK }}
                 />
               </Bar>
               <Bar dataKey="usd" name="Actual" fill={COLORS[0]} radius={[5, 5, 0, 0]}>
                 <LabelList
                   dataKey="usd"
                   position="insideCenter"
-                  angle={0}
+                  angle={-90}
                   offset={0}
                   formatter={(v) => fmtUsd(v)}
-                  style={{ fontSize: 11, fontWeight: 800, fill: "#fff" }}
+                  style={{ fontSize: 10, fontWeight: 800, fill: "#fff" }}
                 />
               </Bar>
             </BarChart>
@@ -1962,7 +1961,7 @@ function BreakdownPage({ title, rows, labelKey, stacked = false }) {
                 <Tooltip formatter={(v) => fmtInt(v)} />
                 <Bar dataKey="pcs" radius={[4, 4, 0, 0]}>
                   {rows.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  <LabelList dataKey="pcs" position="top" formatter={(v) => fmtInt(v)} style={{ fontSize: 11, fill: INK }} />
+                  <LabelList dataKey="pcs" position="insideCenter" angle={-90} formatter={(v) => fmtInt(v)} style={{ fontSize: 10, fontWeight: 700, fill: "#fff" }} />
                 </Bar>
               </BarChart>
             ) : <EmptyState text="No data" />}
@@ -1976,7 +1975,7 @@ function BreakdownPage({ title, rows, labelKey, stacked = false }) {
                 <Tooltip formatter={(v) => fmtUsd(v)} />
                 <Bar dataKey="usd" radius={[4, 4, 0, 0]}>
                   {rows.map((_, i) => <Cell key={i} fill={COLORS[(i + 3) % COLORS.length]} />)}
-                  <LabelList dataKey="usd" position="top" formatter={(v) => fmtUsd(v)} style={{ fontSize: 11, fill: INK }} />
+                  <LabelList dataKey="usd" position="insideCenter" angle={-90} formatter={(v) => fmtUsd(v)} style={{ fontSize: 10, fontWeight: 700, fill: "#fff" }} />
                 </Bar>
               </BarChart>
             ) : <EmptyState text="No data" />}
@@ -2064,7 +2063,7 @@ function WastagePage({ filteredData, kpi, settings }) {
               <XAxis dataKey="operator" tick={{ fontSize: 9 }} interval={0} angle={-30} textAnchor="end" height={70} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip />
-              <Bar dataKey="wastage" fill={COLORS[3]} radius={[4, 4, 0, 0]}><LabelList dataKey="wastage" position="top" formatter={(v) => fmtInt(v)} style={{ fontSize: 10, fill: INK }} /></Bar>
+              <Bar dataKey="wastage" fill={COLORS[3]} radius={[4, 4, 0, 0]}><LabelList dataKey="wastage" position="insideCenter" angle={-90} formatter={(v) => fmtInt(v)} style={{ fontSize: 10, fontWeight: 700, fill: "#fff" }} /></Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
@@ -2075,7 +2074,7 @@ function WastagePage({ filteredData, kpi, settings }) {
               <XAxis dataKey="machine" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip />
-              <Bar dataKey="breakdown" fill={COLORS[5]} radius={[4, 4, 0, 0]}><LabelList dataKey="breakdown" position="top" formatter={(v) => fmtInt(v)} style={{ fontSize: 10, fill: INK }} /></Bar>
+              <Bar dataKey="breakdown" fill={COLORS[5]} radius={[4, 4, 0, 0]}><LabelList dataKey="breakdown" position="insideCenter" angle={-90} formatter={(v) => fmtInt(v)} style={{ fontSize: 10, fontWeight: 700, fill: "#fff" }} /></Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
@@ -2176,14 +2175,13 @@ function ImportPage({ handleFile, importSummary, fileInputRef, rawData, previewR
           ) : (
             <>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="flex justify-between border-b border-slate-100 py-1.5"><span className="text-slate-500">Records Found</span><span className="font-semibold">{importSummary.total.toLocaleString()}</span></div>
-                <div className="flex justify-between border-b border-slate-100 py-1.5"><span className="text-slate-500">Valid Records</span><span className="font-semibold text-emerald-600">{importSummary.valid.toLocaleString()}</span></div>
-                {importSummary.invalid !== undefined && (
-                  <div className="flex justify-between border-b border-slate-100 py-1.5"><span className="text-slate-500">Invalid Records</span><span className="font-semibold text-rose-600">{importSummary.invalid.toLocaleString()}</span></div>
+                <div className="flex justify-between border-b border-slate-100 py-1.5"><span className="text-slate-500">Rows Found</span><span className="font-semibold">{importSummary.total.toLocaleString()}</span></div>
+                <div className="flex justify-between border-b border-slate-100 py-1.5"><span className="text-slate-500">Rows Ready / Saved</span><span className="font-semibold text-emerald-600">{(importSummary.valid ?? 0).toLocaleString()}</span></div>
+                {importSummary.emptyOperator > 0 && (
+                  <div className="flex justify-between border-b border-slate-100 py-1.5"><span className="text-slate-500">Blank Operator (kept)</span><span className="font-semibold text-slate-600">{importSummary.emptyOperator.toLocaleString()}</span></div>
                 )}
-                <div className="flex justify-between border-b border-slate-100 py-1.5"><span className="text-slate-500">Duplicates Skipped</span><span className="font-semibold text-amber-600">{(importSummary.dupes ?? importSummary.withinBatchDupes ?? 0).toLocaleString()}</span></div>
-                {importSummary.emptyOperator !== undefined && (
-                  <div className="flex justify-between border-b border-slate-100 py-1.5 col-span-2"><span className="text-slate-500">Empty Operator Names</span><span className="font-semibold">{importSummary.emptyOperator.toLocaleString()}</span></div>
+                {importSummary.emptyDate > 0 && (
+                  <div className="flex justify-between border-b border-slate-100 py-1.5"><span className="text-slate-500">Blank Date (kept)</span><span className="font-semibold text-slate-600">{importSummary.emptyDate.toLocaleString()}</span></div>
                 )}
               </div>
               {importSummary.message && (
@@ -2196,7 +2194,7 @@ function ImportPage({ handleFile, importSummary, fileInputRef, rawData, previewR
               )}
             </>
           )}
-          <p className="text-xs text-slate-400 mt-3">{rawData.length.toLocaleString()} records currently in the database. Duplicate detection uses Date + Job Number + Machine + Operator + Shift as the unique key.</p>
+          <p className="text-xs text-slate-400 mt-3">{rawData.length.toLocaleString()} records currently in the database. Import is append-only: every submitted row is kept and duplicate filtering is disabled.</p>
         </Card>
       )}
     </div>

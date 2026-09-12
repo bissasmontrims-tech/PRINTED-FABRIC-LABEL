@@ -40,7 +40,7 @@ create trigger on_auth_user_created
 -- ----------------------------------------------------------------------------
 create table if not exists public.production_data (
   id               bigint generated always as identity primary key,
-  report_date      date not null,               -- calendar date only, NOT timestamptz
+  report_date      date,               -- calendar date only, NOT timestamptz
   mc_type          text,
   shift            text,
   job_number       text,
@@ -50,7 +50,7 @@ create table if not exists public.production_data (
   price_per_dz     numeric,
   buyer_name       text,
   customer_name    text,
-  operator_name    text not null,
+  operator_name    text,
   machine_no       text,
   target_usd       numeric,
   dhu_percent      numeric,
