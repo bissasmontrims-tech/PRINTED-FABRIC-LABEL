@@ -1231,7 +1231,7 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
         </ChartCard>
         <ChartCard title={`${tab[0].toUpperCase() + tab.slice(1)} Target vs Actual`}>
           {series.length ? (
-            <BarChart data={series} margin={{ top: 18, right: 18, left: 8, bottom: 18 }} barGap={4}>
+            <BarChart data={series} margin={{ top: 34, right: 28, left: 8, bottom: 18 }} barGap={8} barCategoryGap="18%">
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis
                 dataKey={xKey}
@@ -1248,21 +1248,19 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
               <Bar dataKey="target" name="Target" fill="#cbd5e1" radius={[5, 5, 0, 0]}>
                 <LabelList
                   dataKey="target"
-                  position="insideCenter"
-                  angle={-90}
-                  offset={0}
+                  position="top"
+                  offset={8}
                   formatter={(v) => fmtUsd(v)}
-                  style={{ fontSize: 9, fontWeight: 700, fill: INK }}
+                  style={{ fontSize: 10, fontWeight: 700, fill: INK }}
                 />
               </Bar>
               <Bar dataKey="usd" name="Actual" fill={COLORS[0]} radius={[5, 5, 0, 0]}>
                 <LabelList
                   dataKey="usd"
-                  position="insideCenter"
-                  angle={-90}
-                  offset={0}
+                  position="top"
+                  offset={8}
                   formatter={(v) => fmtUsd(v)}
-                  style={{ fontSize: 9, fontWeight: 700, fill: "#fff" }}
+                  style={{ fontSize: 10, fontWeight: 700, fill: INK }}
                 />
               </Bar>
             </BarChart>
@@ -1887,25 +1885,52 @@ function HorizontalBarChart({ rows, dataKey, labelKey, formatter, colorOffset = 
   const [expanded, setExpanded] = useState(false);
   const sorted = useMemo(() => [...rows].sort((a, b) => (b[dataKey] || 0) - (a[dataKey] || 0)), [rows, dataKey]);
   const visible = expanded ? sorted : sorted.slice(0, 10);
-  const height = Math.max(160, visible.length * 34 + 24);
+  const height = Math.max(230, visible.length * 42 + 54);
+  const isUsd = dataKey === "usd";
   return (
     <div>
       <div style={{ width: "100%", height }}>
         <ResponsiveContainer>
-          <BarChart data={visible} layout="vertical" margin={{ left: 8, right: 60, top: 4, bottom: 4 }}>
+          <BarChart
+            data={visible}
+            layout="vertical"
+            margin={{ left: 8, right: isUsd ? 105 : 70, top: 8, bottom: 12 }}
+          >
             <CartesianGrid stroke={LINE} horizontal={false} vertical />
-            <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => v.toLocaleString("en-US")} />
-            <YAxis type="category" dataKey={labelKey} tick={{ fontSize: 11 }} width={140} interval={0} />
-            <Tooltip formatter={(v) => formatter(v)} />
-            <Bar dataKey={dataKey} radius={[0, 4, 4, 0]} maxBarSize={22}>
+            <XAxis
+              type="number"
+              tick={{ fontSize: 11, fill: MUTE }}
+              tickFormatter={(v) => isUsd ? fmtUsd(v) : Number(v || 0).toLocaleString("en-US")}
+              axisLine={{ stroke: "#94a3b8" }}
+            />
+            <YAxis
+              type="category"
+              dataKey={labelKey}
+              tick={{ fontSize: 11, fill: INK }}
+              width={150}
+              interval={0}
+              axisLine={false}
+              tickLine={false}
+            />
+            <Tooltip
+              formatter={(v) => formatter(v)}
+              contentStyle={{ borderRadius: 10, border: "1px solid #e2e8f0", boxShadow: "0 8px 24px rgba(15,23,42,.10)" }}
+            />
+            <Bar dataKey={dataKey} radius={[0, 6, 6, 0]} maxBarSize={26}>
               {visible.map((_, i) => <Cell key={i} fill={COLORS[(i + colorOffset) % COLORS.length]} />)}
-              <LabelList dataKey={dataKey} position="right" formatter={(v) => formatter(v)} style={{ fontSize: 11, fill: INK }} />
+              <LabelList
+                dataKey={dataKey}
+                position="right"
+                offset={8}
+                formatter={(v) => formatter(v)}
+                style={{ fontSize: 12, fontWeight: 700, fill: INK }}
+              />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
       </div>
       {sorted.length > 10 && (
-        <button onClick={() => setExpanded((v) => !v)} className="mt-2 text-xs font-medium text-blue-600 hover:underline">
+        <button onClick={() => setExpanded((v) => !v)} className="mt-2 text-xs font-semibold text-blue-600 hover:underline">
           {expanded ? "Show Top 10" : `View More (${sorted.length - 10} more)`}
         </button>
       )}
@@ -1913,55 +1938,23 @@ function HorizontalBarChart({ rows, dataKey, labelKey, formatter, colorOffset = 
   );
 }
 
-function BreakdownPage({ title, rows, labelKey, stacked = false }) {
-  // Buyer/Customer analysis (requirement H) uses full-width horizontal bar
-  // charts, one directly below the other — never side by side, never
-  // rotated labels. Machine/MC Type/Shift keep their original layout below.
+function BreakdownPage({ title, rows, labelKey }) {
   return (
     <div className="flex flex-col gap-5">
-      {stacked ? (
-        <div className="flex flex-col gap-4">
-          <Card>
-            <div className="text-sm font-semibold text-slate-700 mb-3">{title} Analysis — Production PCS</div>
-            {rows.length ? <HorizontalBarChart rows={rows} dataKey="pcs" labelKey={labelKey} formatter={fmtInt} colorOffset={0} /> : <EmptyState text="No data" />}
-          </Card>
-          <Card>
-            <div className="text-sm font-semibold text-slate-700 mb-3">{title} Analysis — Production USD</div>
-            {rows.length ? <HorizontalBarChart rows={rows} dataKey="usd" labelKey={labelKey} formatter={fmtUsd} colorOffset={3} /> : <EmptyState text="No data" />}
-          </Card>
+      <Card>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="text-sm font-semibold text-slate-700">{title} Analysis — Production PCS</div>
+          <span className="text-xs text-slate-400">Sorted highest → lowest</span>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <ChartCard title={`${title}-wise Production PCS`}>
-            {rows.length ? (
-              <BarChart data={rows}>
-                <CartesianGrid stroke={LINE} vertical={false} />
-                <XAxis dataKey={labelKey} tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={50} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(v) => fmtInt(v)} />
-                <Bar dataKey="pcs" radius={[4, 4, 0, 0]}>
-                  {rows.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  <LabelList dataKey="pcs" position="top" formatter={(v) => fmtInt(v)} style={{ fontSize: 11, fill: INK }} />
-                </Bar>
-              </BarChart>
-            ) : <EmptyState text="No data" />}
-          </ChartCard>
-          <ChartCard title={`${title}-wise Production USD`}>
-            {rows.length ? (
-              <BarChart data={rows}>
-                <CartesianGrid stroke={LINE} vertical={false} />
-                <XAxis dataKey={labelKey} tick={{ fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={50} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(v) => fmtUsd(v)} />
-                <Bar dataKey="usd" radius={[4, 4, 0, 0]}>
-                  {rows.map((_, i) => <Cell key={i} fill={COLORS[(i + 3) % COLORS.length]} />)}
-                  <LabelList dataKey="usd" position="top" formatter={(v) => fmtUsd(v)} style={{ fontSize: 11, fill: INK }} />
-                </Bar>
-              </BarChart>
-            ) : <EmptyState text="No data" />}
-          </ChartCard>
+        {rows.length ? <HorizontalBarChart rows={rows} dataKey="pcs" labelKey={labelKey} formatter={fmtInt} colorOffset={0} /> : <EmptyState text="No data" />}
+      </Card>
+      <Card>
+        <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="text-sm font-semibold text-slate-700">{title} Analysis — Production USD</div>
+          <span className="text-xs font-semibold text-emerald-600">USD values shown clearly</span>
         </div>
-      )}
+        {rows.length ? <HorizontalBarChart rows={rows} dataKey="usd" labelKey={labelKey} formatter={fmtUsd} colorOffset={3} /> : <EmptyState text="No data" />}
+      </Card>
       <Card>
         <SectionTitle>{title} Performance</SectionTitle>
         <DataTable pageSize={10} columns={[
