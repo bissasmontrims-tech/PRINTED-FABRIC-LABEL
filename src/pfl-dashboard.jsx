@@ -61,6 +61,59 @@ const fmtInt = (n) => (n == null || isNaN(n) ? "—" : Math.round(n).toLocaleStr
 const fmtUsd = (n, cur = "USD") =>
   n == null || isNaN(n) ? "—" : (cur === "USD" ? "$" : cur + " ") + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtPct = (n) => (n == null || isNaN(n) ? "—" : n.toFixed(1) + "%");
+
+// Chart-specific formats keep labels readable while KPI/table values remain exact.
+const fmtChartUsd = (n) => {
+  if (n == null || isNaN(n)) return "—";
+  const v = Number(n);
+  if (Math.abs(v) >= 1000) return "$" + Math.round(v).toLocaleString("en-US");
+  return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+const fmtShortDate = (d) => {
+  if (!d || typeof d !== "string") return d || "";
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const parts = d.split("-");
+  if (parts.length !== 3) return d;
+  const m = Number(parts[1]);
+  return `${parts[2]}-${months[m - 1] || parts[1]}`;
+};
+
+function VerticalValueLabel({ x = 0, y = 0, width = 0, height = 0, value, formatter = (v) => v, fill = "#fff" }) {
+  if (value == null || isNaN(value)) return null;
+  const text = formatter(value);
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  const fontSize = Math.max(9, Math.min(11, Math.abs(height) > 70 ? 11 : 9));
+  return (
+    <g pointerEvents="none">
+      <text
+        x={cx}
+        y={cy}
+        transform={`rotate(-90 ${cx} ${cy})`}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={fontSize}
+        fontWeight={800}
+        fill={fill}
+        stroke={fill === "#fff" ? "rgba(0,0,0,.16)" : "rgba(255,255,255,.55)"}
+        strokeWidth={fill === "#fff" ? 0.7 : 0.5}
+        paintOrder="stroke"
+      >{text}</text>
+    </g>
+  );
+}
+
+function PointValueLabel({ x = 0, y = 0, value, formatter = (v) => v }) {
+  if (value == null || isNaN(value)) return null;
+  const text = formatter(value);
+  const width = Math.max(72, String(text).length * 7 + 12);
+  return (
+    <g pointerEvents="none">
+      <rect x={x - width / 2} y={y - 23} width={width} height={17} rx={5} fill="#fff" stroke="#cbd5e1" />
+      <text x={x} y={y - 11} textAnchor="middle" fontSize={10} fontWeight={800} fill={INK}>{text}</text>
+    </g>
+  );
+}
 // Dates are stored as plain "YYYY-MM-DD" strings (see src/lib/dateUtils.js).
 // Display is pure string formatting — never routed through `new Date(...)` —
 // so there is no timezone-driven day shift possible.
@@ -1117,7 +1170,7 @@ function OverviewPage({ kpi, settings, alerts, operatorRows, below50kPcsOps, bel
           {dailySeries.length ? (
             <LineChart data={dailySeries}>
               <CartesianGrid stroke={LINE} vertical={false} />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(d) => d.slice(5)} />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={fmtShortDate} />
               <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => fmtUsd(v)} />
               <Tooltip formatter={(v) => fmtUsd(v)} labelFormatter={fmtDate} />
               <Line type="monotone" dataKey="usd" name="Actual USD" stroke={COLORS[0]} strokeWidth={2} dot={false} />
@@ -1134,7 +1187,7 @@ function OverviewPage({ kpi, settings, alerts, operatorRows, below50kPcsOps, bel
               <Tooltip formatter={(v) => fmtUsd(v)} />
               <Bar dataKey="usd" name="USD" radius={[4, 4, 0, 0]}>
                 {mcTypeRows.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                <LabelList dataKey="usd" position="insideCenter" angle={-90} offset={0} formatter={(v) => fmtUsd(v)} style={{ fontSize: 10, fontWeight: 700, fill: "#fff" }} />
+                <LabelList dataKey="usd" content={<VerticalValueLabel formatter={fmtChartUsd} fill="#fff" />} />
               </Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
@@ -1208,13 +1261,13 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis
                 dataKey={xKey}
-                interval={series.length > 12 ? Math.ceil(series.length / 10) - 1 : 0}
+                interval={series.length > 10 ? Math.ceil(series.length / 10) - 1 : 0}
                 angle={0}
                 textAnchor="middle"
-                height={tab === "daily" ? 34 : 32}
-                tickMargin={8}
-                tick={{ fontSize: tab === "daily" ? 10 : 10, fill: MUTE }}
-                tickFormatter={(v) => tab === "daily" ? v : v}
+                height={tab === "daily" ? 38 : 32}
+                tickMargin={9}
+                tick={{ fontSize: 10, fill: MUTE }}
+                tickFormatter={(v) => tab === "daily" ? fmtShortDate(v) : v}
               />
               <YAxis
                 tick={{ fontSize: 11, fill: MUTE }}
@@ -1230,14 +1283,7 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
                 dot={{ r: 3.5, strokeWidth: 2, fill: "#fff" }}
                 activeDot={{ r: 5 }}
               >
-                <LabelList
-                  dataKey="pcs"
-                  position="top"
-                  offset={8}
-                  angle={0}
-                  formatter={(v) => fmtInt(v)}
-                  style={{ fontSize: 10, fontWeight: 700, fill: INK }}
-                />
+                <LabelList dataKey="pcs" content={<PointValueLabel formatter={fmtInt} />} />
               </Area>
             </AreaChart>
           ) : <EmptyState text="No data" />}
@@ -1248,16 +1294,17 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
           minWidth={0}
         >
           {series.length ? (
-            <BarChart data={series} margin={{ top: 8, right: 18, left: 8, bottom: 8 }} barGap={8}>
+            <BarChart data={series} margin={{ top: 20, right: 24, left: 8, bottom: 18 }} barGap={10} barCategoryGap="18%">
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis
                 dataKey={xKey}
-                interval={series.length > 12 ? Math.ceil(series.length / 10) - 1 : 0}
+                interval={series.length > 10 ? Math.ceil(series.length / 10) - 1 : 0}
                 angle={0}
                 textAnchor="middle"
-                height={tab === "daily" ? 34 : 32}
-                tickMargin={8}
-                tick={{ fontSize: tab === "daily" ? 10 : 10, fill: MUTE }}
+                height={tab === "daily" ? 38 : 32}
+                tickMargin={9}
+                tick={{ fontSize: 10, fill: MUTE }}
+                tickFormatter={(v) => tab === "daily" ? fmtShortDate(v) : v}
               />
               <YAxis
                 tick={{ fontSize: 11, fill: MUTE }}
@@ -1268,21 +1315,13 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
               <Bar dataKey="target" name="Target" fill="#cbd5e1" radius={[5, 5, 0, 0]}>
                 <LabelList
                   dataKey="target"
-                  position="insideCenter"
-                  angle={-90}
-                  offset={0}
-                  formatter={(v) => fmtUsd(v)}
-                  style={{ fontSize: 10, fontWeight: 800, fill: INK }}
+                  content={<VerticalValueLabel formatter={fmtChartUsd} fill={INK} />}
                 />
               </Bar>
               <Bar dataKey="usd" name="Actual" fill={COLORS[0]} radius={[5, 5, 0, 0]}>
                 <LabelList
                   dataKey="usd"
-                  position="insideCenter"
-                  angle={-90}
-                  offset={0}
-                  formatter={(v) => fmtUsd(v)}
-                  style={{ fontSize: 10, fontWeight: 800, fill: "#fff" }}
+                  content={<VerticalValueLabel formatter={fmtChartUsd} fill="#fff" />}
                 />
               </Bar>
             </BarChart>
@@ -1961,7 +2000,7 @@ function BreakdownPage({ title, rows, labelKey, stacked = false }) {
                 <Tooltip formatter={(v) => fmtInt(v)} />
                 <Bar dataKey="pcs" radius={[4, 4, 0, 0]}>
                   {rows.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                  <LabelList dataKey="pcs" position="insideCenter" angle={-90} formatter={(v) => fmtInt(v)} style={{ fontSize: 10, fontWeight: 700, fill: "#fff" }} />
+                  <LabelList dataKey="pcs" content={<VerticalValueLabel formatter={fmtInt} fill="#fff" />} />
                 </Bar>
               </BarChart>
             ) : <EmptyState text="No data" />}
@@ -1975,7 +2014,7 @@ function BreakdownPage({ title, rows, labelKey, stacked = false }) {
                 <Tooltip formatter={(v) => fmtUsd(v)} />
                 <Bar dataKey="usd" radius={[4, 4, 0, 0]}>
                   {rows.map((_, i) => <Cell key={i} fill={COLORS[(i + 3) % COLORS.length]} />)}
-                  <LabelList dataKey="usd" position="insideCenter" angle={-90} formatter={(v) => fmtUsd(v)} style={{ fontSize: 10, fontWeight: 700, fill: "#fff" }} />
+                  <LabelList dataKey="usd" content={<VerticalValueLabel formatter={fmtChartUsd} fill="#fff" />} />
                 </Bar>
               </BarChart>
             ) : <EmptyState text="No data" />}
@@ -2063,7 +2102,7 @@ function WastagePage({ filteredData, kpi, settings }) {
               <XAxis dataKey="operator" tick={{ fontSize: 9 }} interval={0} angle={-30} textAnchor="end" height={70} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip />
-              <Bar dataKey="wastage" fill={COLORS[3]} radius={[4, 4, 0, 0]}><LabelList dataKey="wastage" position="insideCenter" angle={-90} formatter={(v) => fmtInt(v)} style={{ fontSize: 10, fontWeight: 700, fill: "#fff" }} /></Bar>
+              <Bar dataKey="wastage" fill={COLORS[3]} radius={[4, 4, 0, 0]}><LabelList dataKey="wastage" content={<VerticalValueLabel formatter={fmtInt} fill="#fff" />} /></Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
@@ -2074,7 +2113,7 @@ function WastagePage({ filteredData, kpi, settings }) {
               <XAxis dataKey="machine" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip />
-              <Bar dataKey="breakdown" fill={COLORS[5]} radius={[4, 4, 0, 0]}><LabelList dataKey="breakdown" position="insideCenter" angle={-90} formatter={(v) => fmtInt(v)} style={{ fontSize: 10, fontWeight: 700, fill: "#fff" }} /></Bar>
+              <Bar dataKey="breakdown" fill={COLORS[5]} radius={[4, 4, 0, 0]}><LabelList dataKey="breakdown" content={<VerticalValueLabel formatter={fmtInt} fill="#fff" />} /></Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
