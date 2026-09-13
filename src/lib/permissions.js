@@ -13,7 +13,8 @@ export function can(profile, action) {
     case "view_dashboard":
       return ROLES.includes(role);
     case "import_data":
-      return role === "admin" || role === "manager";
+      // Manager is strictly read-only. Only Admin can import production data.
+      return role === "admin";
     case "edit_data":
     case "delete_data":
     case "manage_users":

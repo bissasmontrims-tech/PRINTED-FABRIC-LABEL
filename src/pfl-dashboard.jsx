@@ -512,6 +512,40 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   const [statusError, setStatusError] = useState("");
   const [statusSavedMsg, setStatusSavedMsg] = useState("");
   const [statusSaving, setStatusSaving] = useState(false);
+  const [operatorUpdateSaving, setOperatorUpdateSaving] = useState(false);
+  const [operatorUpdateError, setOperatorUpdateError] = useState("");
+  const [operatorUpdateSavedMsg, setOperatorUpdateSavedMsg] = useState("");
+
+  // Cutting operator is stored separately from the production operator.
+  // Supervisors can update only their own jobs; Managers/Admins can update any job.
+  async function updateCuttingOperator(jobNo, operatorName) {
+    setOperatorUpdateError(""); setOperatorUpdateSavedMsg("");
+    const name = String(operatorName || "").trim();
+    if (!name) { setOperatorUpdateError("Please enter a Cutting Operator Name."); return false; }
+    // Manager is strictly read-only. Only Admin and the owning Supervisor
+    // may change a Cutting Operator. RLS below enforces the same rule.
+    if (!profile || !["admin", "supervisor"].includes(profile.role)) {
+      setOperatorUpdateError("Manager access is view-only. Operator name cannot be updated.");
+      return false;
+    }
+    const job = jobs.find((j) => j.job_no === jobNo);
+    if (!job) { setOperatorUpdateError("Job not found."); return false; }
+    if (profile.role === "supervisor" && job.user_id !== session?.user?.id) {
+      setOperatorUpdateError("You can update the Cutting Operator only for your own job.");
+      return false;
+    }
+    if (!["Cutting Running", "Cutting Complete", "Handover to QC"].includes(job.current_status)) {
+      setOperatorUpdateError("Cutting Operator can be updated only after the job reaches Cutting Running.");
+      return false;
+    }
+    setOperatorUpdateSaving(true);
+    const { error } = await supabase.from("jobs").update({ cutting_operator_name: name }).eq("job_no", jobNo);
+    setOperatorUpdateSaving(false);
+    if (error) { setOperatorUpdateError(`Operator update failed: ${error.message}`); return false; }
+    setOperatorUpdateSavedMsg("Cutting Operator Name Updated Successfully");
+    await fetchJobs();
+    return true;
+  }
 
   // `allowedNextOnly`: true for a Supervisor's own update (only the next
   // stage in STATUS_STAGES is permitted — no jumping); false for Admin
@@ -1081,7 +1115,9 @@ export default function PFLDashboard({ session, profile, onLogout }) {
             onUpdate={updatePlanEntry} onDelete={deletePlanEntry} currency={settings.currency}
             supervisorDirectory={supervisorDirectory}
             jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={updateJobStatus} onFetchHistory={fetchJobHistory}
-            statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />
+            statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
+        onUpdateCuttingOperator={updateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
+        operatorUpdateError={operatorUpdateError} operatorUpdateSavedMsg={operatorUpdateSavedMsg} />
           )}
           {page === "operators" && (
             <OperatorsPage operatorRows={operatorRows} settings={settings} options={options}
@@ -1531,10 +1567,14 @@ function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg,
     ? <AdminDailyPlanView readOnly={profile.role === "manager"} canCorrectStatus={profile.role === "admin"} title={profile.role === "manager" ? "Manager view" : "Admin view"} planEntries={planEntries} loading={loading} saving={saving} error={error} savedMsg={savedMsg}
         onSubmit={onSubmit} onDelete={onDelete} currency={currency} supervisorDirectory={supervisorDirectory}
         jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
+        onUpdateCuttingOperator={updateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
+        operatorUpdateError={operatorUpdateError} operatorUpdateSavedMsg={operatorUpdateSavedMsg}
         statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />
     : <SupervisorDailyPlanView profile={profile} planEntries={planEntries} loading={loading} saving={saving} error={error}
         savedMsg={savedMsg} onSubmit={onSubmit} onUpdate={onUpdate} onDelete={onDelete} currency={currency}
         jobs={jobs} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
+        onUpdateCuttingOperator={updateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
+        operatorUpdateError={operatorUpdateError} operatorUpdateSavedMsg={operatorUpdateSavedMsg}
         statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />;
 }
 
@@ -1564,13 +1604,14 @@ function StatusHistoryList({ history }) {
 // Search is client-side over `myJobs`/`jobs`, which for a Supervisor RLS has
 // already limited to their own rows — this is a UX convenience on top of
 // that, not the actual security boundary.
-function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving, scopeToUserId, allowedNextOnly, canCorrect }) {
+function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving, onUpdateCuttingOperator, operatorUpdateSaving, operatorUpdateError, operatorUpdateSavedMsg, scopeToUserId, allowedNextOnly, canCorrect }) {
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState(false);
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pickedStatus, setPickedStatus] = useState("");
+  const [cuttingOperator, setCuttingOperator] = useState("");
 
   function runSearch() {
     setSearched(true);
@@ -1582,6 +1623,7 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
     if (!jobAgg || !jobRow) { setResult(null); return; }
     setResult({ jobAgg, jobRow });
     setPickedStatus("");
+    setCuttingOperator(jobRow.cutting_operator_name || "");
   }
 
   async function loadHistory() {
@@ -1625,6 +1667,7 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-3">
             <div><span className="text-slate-400 block text-xs">Buyer</span>{result.jobAgg.buyer_no || "—"}</div>
             <div><span className="text-slate-400 block text-xs">Supervisor</span>{result.jobRow.supervisor_name}</div>
+            <div><span className="text-slate-400 block text-xs">Cutting Operator</span>{result.jobRow.cutting_operator_name || "Not assigned"}</div>
             <div><span className="text-slate-400 block text-xs">Machine</span>{lastEntry?.machine_name || "—"}</div>
             <div><span className="text-slate-400 block text-xs">Order Quantity</span>{fmtInt(result.jobAgg.order_quantity)} PCS</div>
             <div><span className="text-slate-400 block text-xs">Production Quantity</span>{fmtInt(result.jobAgg.produced)} PCS</div>
@@ -1632,6 +1675,25 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
             <div><span className="text-slate-400 block text-xs">Production USD</span>{fmtUsd(totalUsd, currency)}</div>
             <div><span className="text-slate-400 block text-xs">Last Updated</span>{new Date(result.jobRow.status_updated_at).toLocaleString()}{result.jobRow.status_updated_by_name ? ` · ${result.jobRow.status_updated_by_name}` : ""}</div>
           </div>
+
+          {(["Cutting Running", "Cutting Complete", "Handover to QC"].includes(result.jobRow.current_status)) && (
+            <div className="pt-3 mb-3 border-t border-slate-200">
+              <div className="text-sm font-semibold text-slate-700 mb-2">Cutting Operator Name</div>
+              <div className="flex gap-2 items-center flex-wrap">
+                <input type="text" value={cuttingOperator} onChange={(e) => setCuttingOperator(e.target.value)}
+                  placeholder="Enter cutting operator name" className="text-sm border border-slate-300 rounded-lg px-3 py-2 w-64 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                <button onClick={async () => {
+                  const ok = await onUpdateCuttingOperator(result.jobRow.job_no, cuttingOperator);
+                  if (ok) setResult((r) => ({ ...r, jobRow: { ...r.jobRow, cutting_operator_name: cuttingOperator.trim() } }));
+                }} disabled={!cuttingOperator.trim() || operatorUpdateSaving}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition disabled:opacity-50">
+                  {operatorUpdateSaving ? "Saving..." : "Update Operator Name"}
+                </button>
+              </div>
+              {operatorUpdateError && <div className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mt-2">{operatorUpdateError}</div>}
+              {operatorUpdateSavedMsg && <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mt-2">{operatorUpdateSavedMsg}</div>}
+            </div>
+          )}
 
           <div className="pt-3 border-t border-slate-200">
             {canCorrect ? (
@@ -1662,7 +1724,7 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
 }
 
 /* ---- Supervisor view: "+ Add Entry", own totals, My Pending Jobs, My Entries ---- */
-function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, jobs, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving }) {
+function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, jobs, onUpdateStatus, onFetchHistory, onUpdateCuttingOperator, operatorUpdateSaving, operatorUpdateError, operatorUpdateSavedMsg, statusError, statusSavedMsg, statusSaving }) {
   const today = todayDhakaISO();
   const [showForm, setShowForm] = useState(false);
   const [filterDate, setFilterDate] = useState(today);
@@ -1726,6 +1788,8 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
         <p className="text-xs text-slate-400 mb-3">A Job appears here only after you've submitted at least one entry for it above.</p>
         <JobStatusSearch myJobs={myJobs} jobs={jobs} profile={profile} currency={currency}
           onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
+          onUpdateCuttingOperator={onUpdateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
+          operatorUpdateError={operatorUpdateError} operatorUpdateSavedMsg={operatorUpdateSavedMsg}
           statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
           scopeToUserId={profile.id} allowedNextOnly canCorrect={false} />
       </Card>
@@ -1771,7 +1835,7 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
 }
 
 /* ---- Admin view: overall + supervisor-wise summary, drill-down, global Pending Jobs, own Add Entry ---- */
-function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, currency, supervisorDirectory, readOnly = false, title = "Admin view", jobs = [], jobsLoading, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving, canCorrectStatus = false }) {
+function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, currency, supervisorDirectory, readOnly = false, title = "Admin view", jobs = [], jobsLoading, onUpdateStatus, onFetchHistory, onUpdateCuttingOperator, operatorUpdateSaving, operatorUpdateError, operatorUpdateSavedMsg, statusError, statusSavedMsg, statusSaving, canCorrectStatus = false }) {
   const latestEntryDate = useMemo(() => {
     const dates = uniqSorted(planEntries.map((e) => e.plan_date));
     return dates[dates.length - 1] || todayDhakaISO();
@@ -1796,6 +1860,7 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
   const [detailJobNo, setDetailJobNo] = useState(null);
   const [detailHistory, setDetailHistory] = useState([]);
   const [detailPicked, setDetailPicked] = useState("");
+  const [detailCuttingOperator, setDetailCuttingOperator] = useState("");
 
   const jobStatusRows = useMemo(() => allJobs.map((j) => {
     const statusRow = jobs.find((jr) => jr.job_no === j.job_no);
@@ -1832,7 +1897,8 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
     if (!detailJobNo || !onFetchHistory) return;
     onFetchHistory(detailJobNo).then(setDetailHistory);
     setDetailPicked("");
-  }, [detailJobNo]); // eslint-disable-line react-hooks/exhaustive-deps
+    setDetailCuttingOperator(detailJob?.cutting_operator_name || "");
+  }, [detailJobNo, detailJob?.cutting_operator_name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function confirmDetailStatus() {
     if (!detailPicked || !detailJob) return;
@@ -1878,6 +1944,7 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
           <div>
             <h2 className="text-base font-semibold text-slate-800">Daily Plan — All Supervisors</h2>
             <p className="text-xs text-slate-400">{title}</p>
+          {readOnly && <p className="text-[11px] font-medium text-amber-600 mt-1">View-only access — Manager cannot add, update, delete, import, or change job status.</p>}
           </div>
           <div className="flex items-center gap-2">
             <input type="date" value={filterDate} onChange={(e) => { setFilterDate(e.target.value); setSelectedSupervisor(null); }}
@@ -2065,12 +2132,33 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
             <div><span className="text-slate-400 block text-xs">Supervisor</span>{detailJob.supervisor_name}</div>
             <div><span className="text-slate-400 block text-xs">Machine</span>{detailJob.entries.find((e) => e.plan_date === detailJob.lastDate)?.machine_name || "—"}</div>
             <div><span className="text-slate-400 block text-xs">Current Status</span><StatusBadgePill status={detailJob.current_status} /></div>
+            <div><span className="text-slate-400 block text-xs">Cutting Operator</span>{detailJob.cutting_operator_name || "Not assigned"}</div>
             <div><span className="text-slate-400 block text-xs">Order Quantity</span>{fmtInt(detailJob.order_quantity)} PCS</div>
             <div><span className="text-slate-400 block text-xs">Total Production Quantity</span>{fmtInt(detailJob.produced)} PCS</div>
             <div><span className="text-slate-400 block text-xs">Pending Quantity</span>{fmtInt(detailJob.pending)} PCS</div>
             <div><span className="text-slate-400 block text-xs">Production USD</span>{fmtUsd(detailJob.entries.reduce((s, e) => s + (Number(e.production_usd) || 0), 0), currency)}</div>
             <div className="col-span-2"><span className="text-slate-400 block text-xs">Last Updated</span>{detailJob.status_updated_at ? new Date(detailJob.status_updated_at).toLocaleString() : "—"}{detailJob.status_updated_by_name ? ` · ${detailJob.status_updated_by_name}` : ""}</div>
           </div>
+
+          {!readOnly && (["Cutting Running", "Cutting Complete", "Handover to QC"].includes(detailJob.current_status)) && (
+            <div className="mb-4 pb-4 border-b border-slate-200">
+              <div className="text-sm font-semibold text-slate-700 mb-2">Cutting Operator Name</div>
+              <div className="flex gap-2 items-center flex-wrap">
+                <input type="text" value={detailCuttingOperator} onChange={(e) => setDetailCuttingOperator(e.target.value)}
+                  placeholder="Enter cutting operator name" className="text-sm border border-slate-300 rounded-lg px-3 py-2 w-64 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                <button onClick={async () => {
+                  const ok = await onUpdateCuttingOperator(detailJob.job_no, detailCuttingOperator);
+                  if (ok) setDetailCuttingOperator(detailCuttingOperator.trim());
+                }} disabled={!detailCuttingOperator.trim() || operatorUpdateSaving}
+                  className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition disabled:opacity-50">
+                  {operatorUpdateSaving ? "Saving..." : "Update Operator Name"}
+                </button>
+              </div>
+              <div className="text-xs text-slate-400 mt-1">Production Operator and Cutting Operator are kept separately.</div>
+              {operatorUpdateError && <div className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mt-2">{operatorUpdateError}</div>}
+              {operatorUpdateSavedMsg && <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mt-2">{operatorUpdateSavedMsg}</div>}
+            </div>
+          )}
 
           {canCorrectStatus && (
             <div className="flex gap-2 items-center flex-wrap mb-4 pb-4 border-b border-slate-200">
