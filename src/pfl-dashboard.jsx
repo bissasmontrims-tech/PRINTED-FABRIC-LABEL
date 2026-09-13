@@ -1116,7 +1116,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
             supervisorDirectory={supervisorDirectory}
             jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={updateJobStatus} onFetchHistory={fetchJobHistory}
             statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
-        onUpdateCuttingOperator={onUpdateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
+        onUpdateCuttingOperator={updateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
         operatorUpdateError={operatorUpdateError} operatorUpdateSavedMsg={operatorUpdateSavedMsg} />
           )}
           {page === "operators" && (
@@ -1788,7 +1788,7 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
         <p className="text-xs text-slate-400 mb-3">A Job appears here only after you've submitted at least one entry for it above.</p>
         <JobStatusSearch myJobs={myJobs} jobs={jobs} profile={profile} currency={currency}
           onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
-          onUpdateCuttingOperator={onUpdateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
+          onUpdateCuttingOperator={updateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
           operatorUpdateError={operatorUpdateError} operatorUpdateSavedMsg={operatorUpdateSavedMsg}
           statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
           scopeToUserId={profile.id} allowedNextOnly canCorrect={false} />
