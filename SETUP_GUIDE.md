@@ -290,10 +290,3 @@ DROP INDEX IF EXISTS public.production_data_unique_key;
 ```
 
 The app now loads production_data in 1000-row pages, refreshes every 30 seconds/on browser focus, and inserts every valid Excel row without deduplication.
-
-
-### Manager access (read-only)
-- Manager can view all dashboard/report pages and Daily Plan data.
-- Manager cannot add/update/delete Daily Plan entries, change job status, change Cutting Operator, or import production data.
-- Only Admin can perform those management/import actions; Supervisors can manage their own allowed workflow entries.
-- If an older database migration created `jobs: manager update cutting operator`, run the updated `supabase/job_status.sql` or drop that policy so RLS remains read-only for managers.

@@ -31,13 +31,9 @@ create table if not exists public.jobs (
   status_updated_at       timestamptz not null default now(),
   status_updated_by       uuid references auth.users(id),
   status_updated_by_name  text,
-  cutting_operator_name   text,
   created_at              timestamptz not null default now(),
   updated_at              timestamptz not null default now()
 );
-
--- Existing installations: add the cutting operator field without changing any existing data.
-alter table public.jobs add column if not exists cutting_operator_name text;
 
 create index if not exists jobs_job_no_idx on public.jobs (job_no);
 create index if not exists jobs_user_idx on public.jobs (user_id);
@@ -78,15 +74,12 @@ create policy "jobs: admin all" on public.jobs
   for all using (public.current_role() = 'admin')
   with check (public.current_role() = 'admin');
 
--- jobs: Manager — view all Job records and status information (READ-ONLY).
+-- jobs: Manager — view all Job records and status information (read-only).
 drop policy if exists "jobs: manager select all" on public.jobs;
 create policy "jobs: manager select all" on public.jobs
   for select using (public.current_role() = 'manager' and public.is_active_user());
 
--- IMPORTANT: Manager has NO INSERT/UPDATE/DELETE policy.
 -- jobs: Supervisor — only their own.
-drop policy if exists "jobs: manager update cutting operator" on public.jobs;
-
 drop policy if exists "jobs: supervisor select own" on public.jobs;
 create policy "jobs: supervisor select own" on public.jobs
   for select using (public.current_role() = 'supervisor' and public.is_active_user() and user_id = auth.uid());
