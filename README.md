@@ -260,9 +260,51 @@ readable.
 The Overview date filter now defaults to **Today** on load and after
 Reset — it previously defaulted to "All Dates".
 
-## Notes
+## Job Status workflow
 
-- The dashboard's existing calculations, filters, tables, charts, and layout
+Run `supabase/job_status.sql` once (after `schema.sql` and
+`daily_plan_entries.sql`) — it adds two new tables and touches nothing
+existing: `jobs` (one row per Job No, created automatically the first time
+that job is submitted via a Daily Plan entry, starting at status
+`Planned`) and `job_status_history` (an append-only audit log — statuses are
+never overwritten, only added to).
+
+**Workflow stages, in order**: Planned → Production Running → Printing
+Complete → Cutting Running → Cutting Complete → Handover to QC. A
+Supervisor can only advance to the *next* stage — the UI only offers that
+one option, and the app double-checks the current stage before writing.
+Admin can correct a job to any stage. ("Completed" is a separate,
+production-*quantity* concept — order ≤ produced — used only as an extra
+filter value; it isn't part of this stage list.)
+
+**Supervisor**: a "Job Status Update" section below their own Pending
+Jobs — search by Job No (only their own jobs match, both by client-side
+scoping and by RLS underneath), see a job card (Buyer, Machine, Order/
+Production/Pending quantities, Production USD, current status, last
+updated), and a single "Update Status → *next stage*" button.
+
+**Admin/Manager**: a "Job Status" section — search by Job No (all jobs),
+a status filter (all 6 stages + "Completed"), clickable count tiles that
+double as the summary, and a full job table. Clicking a row opens full
+details plus its complete status history. Only Admin sees the "correct
+status" control (Manager is view-only here, matching the existing
+Manager-is-read-only pattern for Daily Plan entries).
+
+**Security**: identical pattern to `daily_plan_entries` — RLS policies use
+`auth.uid()` for every operation, block a Supervisor from touching another
+Supervisor's job or history row even if `user_id`/`job_no` in a request were
+tampered with, and default-deny for any role without an explicit policy.
+
+**A field-list note**: the request's job card/table examples mention
+"Customer" and "MC Type", but neither appears in the authoritative field
+list for the production entry, so neither was added to the database or
+UI — adding them would mean inventing a schema decision not actually
+specified. If you do want them, they're a small, additive change (one new
+column + one new form field) — just confirm the exact field name and
+whether it's free text or tied to the main production dataset's existing
+Buyer/Customer/MC Type values.
+
+## Notes
   are unchanged — this update adds persistence, auth, roles, the corrected
   date handling, and the $28,000 daily target on top of the original design.
 - `RAW_DATA` (the originally embedded sample) is now only a local-demo

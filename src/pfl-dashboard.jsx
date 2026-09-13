@@ -53,6 +53,13 @@ const SUPERVISORS = ["Aslam", "Murad", "Biplob", "Selim Reza", "Shahjahan"];
 // Machine/MC Type/Data Table pages, "Operator Below 50,000 PCS") is
 // unaffected and still covers every MC type.
 const CORE_MC_TYPES = ["Flexo", "Nylo", "Auto Screen"];
+// Job workflow stages, in required order — a normal Supervisor may only
+// advance to the next stage, never jump ahead or backward (Admin can
+// correct to any stage). "Completed" is a separate, PRODUCTION-quantity
+// concept (order <= produced) used only as an extra filter value — it is
+// not part of this ordered workflow.
+const STATUS_STAGES = ["Planned", "Production Running", "Printing Complete", "Cutting Running", "Cutting Complete", "Handover to QC"];
+const STATUS_FILTER_OPTIONS = ["All", ...STATUS_STAGES, "Completed"];
 const INK = "#1e293b";
 const MUTE = "#64748b";
 const LINE = "#e2e8f0";
@@ -457,10 +464,20 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     setPlanSaving(true); setPlanError(""); setPlanSavedMsg("");
     const row = { ...entry, user_id: targetUserId, supervisor_name: targetSupervisorName };
     const { error } = await supabase.from("daily_plan_entries").insert(row);
+    if (error) { setPlanSaving(false); setPlanError(`Database insert failed: ${error.message}`); return false; }
+    // First time this Job No is submitted, create its status record (starts
+    // at "Planned"). ignoreDuplicates means an existing job's status is
+    // never reset by a later day's production entry for the same job.
+    if (entry.job_no) {
+      await supabase.from("jobs").upsert(
+        { job_no: entry.job_no, user_id: targetUserId, supervisor_name: targetSupervisorName },
+        { onConflict: "job_no", ignoreDuplicates: true }
+      );
+    }
     setPlanSaving(false);
-    if (error) { setPlanError(`Database insert failed: ${error.message}`); return false; }
     setPlanSavedMsg(`Entry for ${formatDisplayDate(entry.plan_date)} saved successfully.`);
     await fetchPlanEntries();
+    await fetchJobs();
     return true;
   }
 
@@ -478,6 +495,57 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     setPlanSaving(false);
     if (error) { setPlanError(`Delete failed: ${error.message}`); return; }
     await fetchPlanEntries();
+  }
+
+  /* ---------- Job Status workflow ---------- */
+  const [jobs, setJobs] = useState([]); // rows from the `jobs` table: {job_no, user_id, supervisor_name, current_status, status_updated_at, status_updated_by_name}
+  const [jobsLoading, setJobsLoading] = useState(supabaseReady);
+  const fetchJobs = useCallback(async () => {
+    if (!supabaseReady) return;
+    setJobsLoading(true);
+    const { data, error } = await supabase.from("jobs").select("*");
+    if (!error && data) setJobs(data);
+    setJobsLoading(false);
+  }, []);
+  useEffect(() => { fetchJobs(); }, [fetchJobs]);
+
+  const [statusError, setStatusError] = useState("");
+  const [statusSavedMsg, setStatusSavedMsg] = useState("");
+  const [statusSaving, setStatusSaving] = useState(false);
+
+  // `allowedNextOnly`: true for a Supervisor's own update (only the next
+  // stage in STATUS_STAGES is permitted — no jumping); false for Admin
+  // correcting a status to anything. RLS still separately enforces WHO can
+  // write which row regardless of what this flag allows client-side.
+  async function updateJobStatus(jobNo, newStatus, updatedByName, allowedNextOnly) {
+    setStatusError(""); setStatusSavedMsg("");
+    const job = jobs.find((j) => j.job_no === jobNo);
+    if (allowedNextOnly && job) {
+      const idx = STATUS_STAGES.indexOf(job.current_status);
+      if (STATUS_STAGES[idx + 1] !== newStatus) { setStatusError("Status can only move to the next stage in order."); return false; }
+    }
+    setStatusSaving(true);
+    const { error: updateErr } = await supabase.from("jobs").update({
+      current_status: newStatus,
+      status_updated_at: new Date().toISOString(),
+      status_updated_by: session?.user?.id || null,
+      status_updated_by_name: updatedByName || null,
+    }).eq("job_no", jobNo);
+    if (updateErr) { setStatusSaving(false); setStatusError(`Status update failed: ${updateErr.message}`); return false; }
+    const { error: histErr } = await supabase.from("job_status_history").insert({
+      job_no: jobNo, status: newStatus, updated_by: session?.user?.id || null, updated_by_name: updatedByName || null,
+    });
+    setStatusSaving(false);
+    if (histErr) { setStatusError(`Status saved, but history log failed: ${histErr.message}`); }
+    setStatusSavedMsg("Status Updated Successfully");
+    await fetchJobs();
+    return true;
+  }
+
+  async function fetchJobHistory(jobNo) {
+    const { data, error } = await supabase.from("job_status_history").select("*").eq("job_no", jobNo).order("updated_at", { ascending: true });
+    if (error) return [];
+    return data;
   }
 
   const allDates = useMemo(() => uniqSorted(rawData.map((r) => r.date)), [rawData]);
@@ -1009,9 +1077,11 @@ export default function PFLDashboard({ session, profile, onLogout }) {
           )}
           {page === "dailyplan" && can(profile, "access_daily_plan") && (
             <DailyPlanPage profile={profile} planEntries={planEntries} loading={planLoading} saving={planSaving}
-              error={planError} savedMsg={planSavedMsg} onSubmit={submitPlanEntry}
-              onUpdate={updatePlanEntry} onDelete={deletePlanEntry} currency={settings.currency}
-              supervisorDirectory={supervisorDirectory} />
+            error={planError} savedMsg={planSavedMsg} onSubmit={submitPlanEntry}
+            onUpdate={updatePlanEntry} onDelete={deletePlanEntry} currency={settings.currency}
+            supervisorDirectory={supervisorDirectory}
+            jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={updateJobStatus} onFetchHistory={fetchJobHistory}
+            statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />
           )}
           {page === "operators" && (
             <OperatorsPage operatorRows={operatorRows} settings={settings} options={options}
@@ -1446,7 +1516,7 @@ function EntryForm({ onSubmit, onCancel, saving, myJobs, extraFields }) {
   );
 }
 
-function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, supervisorDirectory }) {
+function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, supervisorDirectory, jobs, jobsLoading, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving }) {
   if (profile.role === "supervisor" && !profile.supervisor_name) {
     return (
       <Card className="max-w-lg">
@@ -1458,14 +1528,141 @@ function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg,
     );
   }
   return (profile.role === "admin" || profile.role === "manager")
-    ? <AdminDailyPlanView readOnly={profile.role === "manager"} title={profile.role === "manager" ? "Manager view" : "Admin view"} planEntries={planEntries} loading={loading} saving={saving} error={error} savedMsg={savedMsg}
-        onSubmit={onSubmit} onDelete={onDelete} currency={currency} supervisorDirectory={supervisorDirectory} />
+    ? <AdminDailyPlanView readOnly={profile.role === "manager"} canCorrectStatus={profile.role === "admin"} title={profile.role === "manager" ? "Manager view" : "Admin view"} planEntries={planEntries} loading={loading} saving={saving} error={error} savedMsg={savedMsg}
+        onSubmit={onSubmit} onDelete={onDelete} currency={currency} supervisorDirectory={supervisorDirectory}
+        jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
+        statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />
     : <SupervisorDailyPlanView profile={profile} planEntries={planEntries} loading={loading} saving={saving} error={error}
-        savedMsg={savedMsg} onSubmit={onSubmit} onUpdate={onUpdate} onDelete={onDelete} currency={currency} />;
+        savedMsg={savedMsg} onSubmit={onSubmit} onUpdate={onUpdate} onDelete={onDelete} currency={currency}
+        jobs={jobs} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
+        statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />;
+}
+
+function StatusBadgePill({ status }) {
+  const isFinal = status === STATUS_STAGES[STATUS_STAGES.length - 1];
+  return <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${isFinal ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-blue-50 text-blue-700 border-blue-200"}`}>{status}</span>;
+}
+
+function StatusHistoryList({ history }) {
+  if (!history.length) return <EmptyState text="No status history yet" />;
+  return (
+    <div className="mt-2 flex flex-col gap-1.5 text-sm">
+      {history.map((h) => (
+        <div key={h.id} className="flex items-center justify-between border-b border-slate-100 py-1.5 gap-3">
+          <span className="font-medium text-slate-700">{h.status}</span>
+          <span className="text-xs text-slate-400 text-right">{h.updated_by_name || "—"} · {new Date(h.updated_at).toLocaleString()}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Shared "Search Job No" + job card + status-update UI, used by both the
+// Supervisor's own view (scopeToUserId set, allowedNextOnly — can only
+// advance one stage at a time) and Admin's job details (no scope, canCorrect
+// — can jump to any stage, per "Admin can correct a status when necessary").
+// Search is client-side over `myJobs`/`jobs`, which for a Supervisor RLS has
+// already limited to their own rows — this is a UX convenience on top of
+// that, not the actual security boundary.
+function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving, scopeToUserId, allowedNextOnly, canCorrect }) {
+  const [query, setQuery] = useState("");
+  const [searched, setSearched] = useState(false);
+  const [result, setResult] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [pickedStatus, setPickedStatus] = useState("");
+
+  function runSearch() {
+    setSearched(true);
+    setHistoryOpen(false);
+    const q = query.trim();
+    if (!q) { setResult(null); return; }
+    const jobAgg = myJobs.find((j) => j.job_no === q);
+    const jobRow = jobs.find((j) => j.job_no === q && (!scopeToUserId || j.user_id === scopeToUserId));
+    if (!jobAgg || !jobRow) { setResult(null); return; }
+    setResult({ jobAgg, jobRow });
+    setPickedStatus("");
+  }
+
+  async function loadHistory() {
+    if (!result) return;
+    setHistory(await onFetchHistory(result.jobRow.job_no));
+    setHistoryOpen(true);
+  }
+
+  const nextStage = result ? STATUS_STAGES[STATUS_STAGES.indexOf(result.jobRow.current_status) + 1] : null;
+  const lastEntry = result?.jobAgg.entries.find((e) => e.plan_date === result.jobAgg.lastDate);
+  const totalUsd = result ? result.jobAgg.entries.reduce((s, e) => s + (Number(e.production_usd) || 0), 0) : 0;
+
+  async function confirmUpdate() {
+    const target = canCorrect ? pickedStatus : nextStage;
+    if (!target || !result) return;
+    const name = profile.supervisor_name || profile.email;
+    const ok = await onUpdateStatus(result.jobRow.job_no, target, name, Boolean(allowedNextOnly));
+    if (ok) {
+      setResult((r) => ({ ...r, jobRow: { ...r.jobRow, current_status: target, status_updated_at: new Date().toISOString(), status_updated_by_name: name } }));
+      setPickedStatus("");
+      if (historyOpen) loadHistory();
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex gap-2 max-w-md mb-4">
+        <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && runSearch()}
+          placeholder="Search Job No" className="flex-1 text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+        <button onClick={runSearch} className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-medium hover:bg-slate-900">Search</button>
+      </div>
+
+      {searched && !result && <EmptyState text={`No job found for "${query}"${scopeToUserId ? " in your entries" : ""}`} />}
+
+      {result && (
+        <div className="border border-slate-200 rounded-xl p-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <h3 className="text-base font-bold text-slate-900">Job {result.jobRow.job_no}</h3>
+            <StatusBadgePill status={result.jobRow.current_status} />
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-3">
+            <div><span className="text-slate-400 block text-xs">Buyer</span>{result.jobAgg.buyer_no || "—"}</div>
+            <div><span className="text-slate-400 block text-xs">Supervisor</span>{result.jobRow.supervisor_name}</div>
+            <div><span className="text-slate-400 block text-xs">Machine</span>{lastEntry?.machine_name || "—"}</div>
+            <div><span className="text-slate-400 block text-xs">Order Quantity</span>{fmtInt(result.jobAgg.order_quantity)} PCS</div>
+            <div><span className="text-slate-400 block text-xs">Production Quantity</span>{fmtInt(result.jobAgg.produced)} PCS</div>
+            <div><span className="text-slate-400 block text-xs">Pending Quantity</span>{fmtInt(result.jobAgg.pending)} PCS</div>
+            <div><span className="text-slate-400 block text-xs">Production USD</span>{fmtUsd(totalUsd, currency)}</div>
+            <div><span className="text-slate-400 block text-xs">Last Updated</span>{new Date(result.jobRow.status_updated_at).toLocaleString()}{result.jobRow.status_updated_by_name ? ` · ${result.jobRow.status_updated_by_name}` : ""}</div>
+          </div>
+
+          <div className="pt-3 border-t border-slate-200">
+            {canCorrect ? (
+              <div className="flex gap-2 items-center flex-wrap">
+                <select value={pickedStatus} onChange={(e) => setPickedStatus(e.target.value)} className="text-sm border border-slate-300 rounded-lg px-2 py-1.5">
+                  <option value="">— choose status —</option>
+                  {STATUS_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <button onClick={confirmUpdate} disabled={!pickedStatus || statusSaving} className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50">Confirm Update</button>
+              </div>
+            ) : nextStage ? (
+              <button onClick={confirmUpdate} disabled={statusSaving} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition disabled:opacity-50">
+                {statusSaving ? "Updating..." : `Update Status → ${nextStage}`}
+              </button>
+            ) : (
+              <span className="text-xs text-emerald-600 font-medium">Workflow complete — Handover to QC</span>
+            )}
+            {statusError && <div className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mt-2">{statusError}</div>}
+            {statusSavedMsg && <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mt-2">{statusSavedMsg}</div>}
+          </div>
+
+          <button onClick={loadHistory} className="text-xs text-blue-600 hover:underline mt-3">{historyOpen ? "Hide" : "View"} Status History</button>
+          {historyOpen && <StatusHistoryList history={history} />}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ---- Supervisor view: "+ Add Entry", own totals, My Pending Jobs, My Entries ---- */
-function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency }) {
+function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, jobs, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving }) {
   const today = todayDhakaISO();
   const [showForm, setShowForm] = useState(false);
   const [filterDate, setFilterDate] = useState(today);
@@ -1525,6 +1722,15 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
       </Card>
 
       <Card>
+        <SectionTitle>Job Status Update</SectionTitle>
+        <p className="text-xs text-slate-400 mb-3">A Job appears here only after you've submitted at least one entry for it above.</p>
+        <JobStatusSearch myJobs={myJobs} jobs={jobs} profile={profile} currency={currency}
+          onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
+          statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
+          scopeToUserId={profile.id} allowedNextOnly canCorrect={false} />
+      </Card>
+
+      <Card>
         <SectionTitle right={
           <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)}
             className="text-sm border border-slate-200 rounded-lg px-2 py-1.5" />
@@ -1565,7 +1771,7 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
 }
 
 /* ---- Admin view: overall + supervisor-wise summary, drill-down, global Pending Jobs, own Add Entry ---- */
-function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, currency, supervisorDirectory, readOnly = false, title = "Admin view" }) {
+function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, currency, supervisorDirectory, readOnly = false, title = "Admin view", jobs = [], jobsLoading, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving, canCorrectStatus = false }) {
   const latestEntryDate = useMemo(() => {
     const dates = uniqSorted(planEntries.map((e) => e.plan_date));
     return dates[dates.length - 1] || todayDhakaISO();
@@ -1581,6 +1787,58 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
 
   const dayEntries = useMemo(() => planEntries.filter((e) => e.plan_date === filterDate), [planEntries, filterDate]);
   const allJobs = useMemo(() => jobAggregates(planEntries), [planEntries]); // all-time, all supervisors
+
+  // Job Search + Status Filter + Summary + Table (Admin/Manager only) — joins
+  // each production job-aggregate with its workflow status from `jobs`
+  // (defaults to "Planned" if a job somehow has no status row yet).
+  const [jobSearchQuery, setJobSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [detailJobNo, setDetailJobNo] = useState(null);
+  const [detailHistory, setDetailHistory] = useState([]);
+  const [detailPicked, setDetailPicked] = useState("");
+
+  const jobStatusRows = useMemo(() => allJobs.map((j) => {
+    const statusRow = jobs.find((jr) => jr.job_no === j.job_no);
+    return {
+      ...j,
+      current_status: statusRow?.current_status || "Planned",
+      status_updated_at: statusRow?.status_updated_at || null,
+      status_updated_by_name: statusRow?.status_updated_by_name || null,
+    };
+  }), [allJobs, jobs]);
+
+  const statusCounts = useMemo(() => {
+    const counts = { All: jobStatusRows.length, Completed: 0 };
+    STATUS_STAGES.forEach((s) => (counts[s] = 0));
+    jobStatusRows.forEach((j) => {
+      counts[j.current_status] = (counts[j.current_status] || 0) + 1;
+      if (j.status === "Completed") counts.Completed += 1;
+    });
+    return counts;
+  }, [jobStatusRows]);
+
+  const filteredJobRows = useMemo(() => {
+    const q = jobSearchQuery.trim().toLowerCase();
+    return jobStatusRows.filter((j) => {
+      if (q && !j.job_no.toLowerCase().includes(q)) return false;
+      if (statusFilter === "All") return true;
+      if (statusFilter === "Completed") return j.status === "Completed"; // production-quantity completion, not workflow stage
+      return j.current_status === statusFilter; // CURRENT status only, never historical
+    });
+  }, [jobStatusRows, jobSearchQuery, statusFilter]);
+
+  const detailJob = detailJobNo ? jobStatusRows.find((j) => j.job_no === detailJobNo) : null;
+  useEffect(() => {
+    if (!detailJobNo || !onFetchHistory) return;
+    onFetchHistory(detailJobNo).then(setDetailHistory);
+    setDetailPicked("");
+  }, [detailJobNo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function confirmDetailStatus() {
+    if (!detailPicked || !detailJob) return;
+    const ok = await onUpdateStatus(detailJob.job_no, detailPicked, "Admin", false);
+    if (ok) { onFetchHistory(detailJob.job_no).then(setDetailHistory); setDetailPicked(""); }
+  }
 
   // Per-supervisor summary for the selected date: that day's USD/Order/Production,
   // plus each touched job's TRUE (all-time) pending — never "today's production" alone.
@@ -1734,6 +1992,102 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
         <SectionTitle>Pending Jobs — All Supervisors (all dates)</SectionTitle>
         {loading ? <div className="text-sm text-slate-400">Loading…</div> : <PendingJobsTable jobs={allJobs} showSupervisorCol currency={currency} />}
       </Card>
+
+      <Card>
+        <SectionTitle>Job Status</SectionTitle>
+        <div className="flex flex-col sm:flex-row gap-3 mb-4">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={15} className="absolute left-3 top-3 text-slate-400" />
+            <input type="text" value={jobSearchQuery} onChange={(e) => setJobSearchQuery(e.target.value)}
+              placeholder="Search Job No" className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200" />
+          </div>
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            className="text-sm border border-slate-300 rounded-lg px-3 py-2">
+            {STATUS_FILTER_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
+          {STATUS_FILTER_OPTIONS.map((s) => (
+            <button key={s} onClick={() => setStatusFilter(s)}
+              className={`rounded-lg border px-2 py-2 text-center transition ${statusFilter === s ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
+              <div className="text-lg font-bold text-slate-900">{statusCounts[s] || 0}</div>
+              <div className="text-[10px] text-slate-500 leading-tight">{s}</div>
+            </button>
+          ))}
+        </div>
+
+        {jobsLoading ? <div className="text-sm text-slate-400">Loading…</div> : (
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  {["Job No", "Buyer", "Supervisor", "Machine", "Order PCS", "Production PCS", "Pending PCS", "Production USD", "Current Status", "Last Updated"].map((h) => (
+                    <th key={h} className="text-left px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filteredJobRows.map((j) => {
+                  const lastEntry = j.entries.find((e) => e.plan_date === j.lastDate);
+                  const usd = j.entries.reduce((s, e) => s + (Number(e.production_usd) || 0), 0);
+                  return (
+                    <tr key={j.job_no} onClick={() => setDetailJobNo(j.job_no)} className="border-b border-slate-100 last:border-0 cursor-pointer hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium text-blue-700 hover:underline">{j.job_no}</td>
+                      <td className="px-3 py-2">{j.buyer_no || "—"}</td>
+                      <td className="px-3 py-2">{j.supervisor_name}</td>
+                      <td className="px-3 py-2">{lastEntry?.machine_name || "—"}</td>
+                      <td className="px-3 py-2">{fmtInt(j.order_quantity)}</td>
+                      <td className="px-3 py-2">{fmtInt(j.produced)}</td>
+                      <td className="px-3 py-2">{fmtInt(j.pending)}</td>
+                      <td className="px-3 py-2">{fmtUsd(usd, currency)}</td>
+                      <td className="px-3 py-2"><StatusBadgePill status={j.current_status} /></td>
+                      <td className="px-3 py-2 text-slate-400">{j.status_updated_at ? new Date(j.status_updated_at).toLocaleString() : "—"}</td>
+                    </tr>
+                  );
+                })}
+                {!filteredJobRows.length && (
+                  <tr><td colSpan={10}><EmptyState text="No jobs match this search/filter" /></td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {detailJob && (
+        <Card>
+          <SectionTitle right={<button onClick={() => setDetailJobNo(null)} className="text-xs text-slate-400 hover:text-slate-600">Close</button>}>
+            Job {detailJob.job_no} — Details
+          </SectionTitle>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-4">
+            <div><span className="text-slate-400 block text-xs">Buyer</span>{detailJob.buyer_no || "—"}</div>
+            <div><span className="text-slate-400 block text-xs">Supervisor</span>{detailJob.supervisor_name}</div>
+            <div><span className="text-slate-400 block text-xs">Machine</span>{detailJob.entries.find((e) => e.plan_date === detailJob.lastDate)?.machine_name || "—"}</div>
+            <div><span className="text-slate-400 block text-xs">Current Status</span><StatusBadgePill status={detailJob.current_status} /></div>
+            <div><span className="text-slate-400 block text-xs">Order Quantity</span>{fmtInt(detailJob.order_quantity)} PCS</div>
+            <div><span className="text-slate-400 block text-xs">Total Production Quantity</span>{fmtInt(detailJob.produced)} PCS</div>
+            <div><span className="text-slate-400 block text-xs">Pending Quantity</span>{fmtInt(detailJob.pending)} PCS</div>
+            <div><span className="text-slate-400 block text-xs">Production USD</span>{fmtUsd(detailJob.entries.reduce((s, e) => s + (Number(e.production_usd) || 0), 0), currency)}</div>
+            <div className="col-span-2"><span className="text-slate-400 block text-xs">Last Updated</span>{detailJob.status_updated_at ? new Date(detailJob.status_updated_at).toLocaleString() : "—"}{detailJob.status_updated_by_name ? ` · ${detailJob.status_updated_by_name}` : ""}</div>
+          </div>
+
+          {canCorrectStatus && (
+            <div className="flex gap-2 items-center flex-wrap mb-4 pb-4 border-b border-slate-200">
+              <select value={detailPicked} onChange={(e) => setDetailPicked(e.target.value)} className="text-sm border border-slate-300 rounded-lg px-2 py-1.5">
+                <option value="">— correct status to —</option>
+                {STATUS_STAGES.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <button onClick={confirmDetailStatus} disabled={!detailPicked || statusSaving} className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50">Confirm Update</button>
+              {statusError && <span className="text-xs text-rose-600">{statusError}</span>}
+              {statusSavedMsg && <span className="text-xs text-emerald-600">{statusSavedMsg}</span>}
+            </div>
+          )}
+
+          <div className="text-sm font-semibold text-slate-700 mb-2">Status History</div>
+          <StatusHistoryList history={detailHistory} />
+        </Card>
+      )}
     </div>
   );
 }
