@@ -1116,7 +1116,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
             supervisorDirectory={supervisorDirectory}
             jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={updateJobStatus} onFetchHistory={fetchJobHistory}
             statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
-        onUpdateCuttingOperator={updateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
+        onUpdateCuttingOperator={onUpdateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
         operatorUpdateError={operatorUpdateError} operatorUpdateSavedMsg={operatorUpdateSavedMsg} />
           )}
           {page === "operators" && (
@@ -1567,13 +1567,13 @@ function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg,
     ? <AdminDailyPlanView readOnly={profile.role === "manager"} canCorrectStatus={profile.role === "admin"} title={profile.role === "manager" ? "Manager view" : "Admin view"} planEntries={planEntries} loading={loading} saving={saving} error={error} savedMsg={savedMsg}
         onSubmit={onSubmit} onDelete={onDelete} currency={currency} supervisorDirectory={supervisorDirectory}
         jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
-        onUpdateCuttingOperator={updateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
+        onUpdateCuttingOperator={onUpdateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
         operatorUpdateError={operatorUpdateError} operatorUpdateSavedMsg={operatorUpdateSavedMsg}
         statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />
     : <SupervisorDailyPlanView profile={profile} planEntries={planEntries} loading={loading} saving={saving} error={error}
         savedMsg={savedMsg} onSubmit={onSubmit} onUpdate={onUpdate} onDelete={onDelete} currency={currency}
         jobs={jobs} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
-        onUpdateCuttingOperator={updateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
+        onUpdateCuttingOperator={onUpdateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
         operatorUpdateError={operatorUpdateError} operatorUpdateSavedMsg={operatorUpdateSavedMsg}
         statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />;
 }
@@ -1788,7 +1788,7 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
         <p className="text-xs text-slate-400 mb-3">A Job appears here only after you've submitted at least one entry for it above.</p>
         <JobStatusSearch myJobs={myJobs} jobs={jobs} profile={profile} currency={currency}
           onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
-          onUpdateCuttingOperator={updateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
+          onUpdateCuttingOperator={onUpdateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
           operatorUpdateError={operatorUpdateError} operatorUpdateSavedMsg={operatorUpdateSavedMsg}
           statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
           scopeToUserId={profile.id} allowedNextOnly canCorrect={false} />
