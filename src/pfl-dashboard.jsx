@@ -1116,7 +1116,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
             supervisorDirectory={supervisorDirectory}
             jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={updateJobStatus} onFetchHistory={fetchJobHistory}
             statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
-        onUpdateCuttingOperator={updateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
+        onUpdateCuttingOperator={onUpdateCuttingOperator} operatorUpdateSaving={operatorUpdateSaving}
         operatorUpdateError={operatorUpdateError} operatorUpdateSavedMsg={operatorUpdateSavedMsg} />
           )}
           {page === "operators" && (
@@ -1552,7 +1552,7 @@ function EntryForm({ onSubmit, onCancel, saving, myJobs, extraFields }) {
   );
 }
 
-function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, supervisorDirectory, jobs, jobsLoading, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving }) {
+function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, supervisorDirectory, jobs, jobsLoading, onUpdateStatus, onFetchHistory, onUpdateCuttingOperator, operatorUpdateSaving, operatorUpdateError, operatorUpdateSavedMsg, statusError, statusSavedMsg, statusSaving }) {
   if (profile.role === "supervisor" && !profile.supervisor_name) {
     return (
       <Card className="max-w-lg">
