@@ -1616,7 +1616,7 @@ function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg,
         statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />
     : <SupervisorDailyPlanView profile={profile} planEntries={planEntries} loading={loading} saving={saving} error={error}
         savedMsg={savedMsg} onSubmit={onSubmit} onUpdate={onUpdate} onDelete={onDelete} currency={currency}
-        jobs={jobs} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory} onUpdateOperator={onUpdateOperator}
+        jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory} onUpdateOperator={onUpdateOperator}
         statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />;
 }
 
@@ -1685,13 +1685,24 @@ function OperatorUpdateBlock({ jobRow, onUpdateOperator, canEdit, actingName, st
   );
 }
 
-function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving, scopeToUserId, allowedNextOnly, canCorrect, canEditOperator }) {
+function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving, scopeToUserId, allowedNextOnly, canCorrect, canEditOperator, initialQuery = "" }) {
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState(false);
   const [result, setResult] = useState(null);
   const [history, setHistory] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [pickedStatus, setPickedStatus] = useState("");
+
+  useEffect(() => {
+    if (initialQuery) { setQuery(String(initialQuery)); setTimeout(() => {
+      const q = String(initialQuery).trim();
+      const jobRow = jobs.find((j) => String(j.job_no) === q && (!scopeToUserId || j.user_id === scopeToUserId));
+      if (jobRow) {
+        const jobAgg = myJobs.find((j) => String(j.job_no) === q) || { job_no: jobRow.job_no, buyer_no: jobRow.buyer_no || "", order_quantity: 0, produced: 0, pending: 0, lastDate: null, entries: [] };
+        setResult({ jobAgg, jobRow }); setSearched(true); setPickedStatus("");
+      }
+    }, 0); }
+  }, [initialQuery, jobs, myJobs, scopeToUserId]);
 
   function runSearch() {
     setSearched(true);
@@ -1795,7 +1806,101 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
 }
 
 /* ---- Supervisor view: "+ Add Entry", own totals, My Pending Jobs, My Entries ---- */
-function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, jobs, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving }) {
+
+function SupervisorJobStatusBoard({ jobs = [], jobsLoading = false, profile, currency, myJobs = [], onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving }) {
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [jobSearch, setJobSearch] = useState("");
+  const [activeJob, setActiveJob] = useState("");
+
+  const counts = useMemo(() => {
+    const out = {};
+    STATUS_FILTER_OPTIONS.forEach((s) => { out[s] = 0; });
+    for (const j of jobs) {
+      const status = j.current_status || "Planned";
+      out[status] = (out[status] || 0) + 1;
+    }
+    out.Completed = jobs.filter((j) => {
+      const a = myJobs.find((x) => x.job_no === j.job_no);
+      return a && a.order_quantity > 0 && a.produced >= a.order_quantity;
+    }).length;
+    out.All = jobs.length;
+    return out;
+  }, [jobs, myJobs]);
+
+  const filtered = useMemo(() => {
+    const q = jobSearch.trim().toLowerCase();
+    return jobs.filter((j) => {
+      const matchesStatus = statusFilter === "All" || (j.current_status || "Planned") === statusFilter;
+      const matchesSearch = !q || String(j.job_no).toLowerCase().includes(q) || String(j.buyer_no || "").toLowerCase().includes(q) || String(j.supervisor_name || "").toLowerCase().includes(q);
+      return matchesStatus && matchesSearch;
+    });
+  }, [jobs, statusFilter, jobSearch]);
+
+  return (
+    <Card>
+      <SectionTitle>Job Status Update — All Supervisors</SectionTitle>
+      <p className="text-xs text-slate-400 mb-3">All active Supervisors can search, open, and update authorized job statuses. Cutting-stage operator names can also be updated manually.</p>
+
+      <div className="flex flex-col sm:flex-row gap-3 mb-4">
+        <div className="relative flex-1 max-w-xs">
+          <Search size={15} className="absolute left-3 top-3 text-slate-400" />
+          <input value={jobSearch} onChange={(e) => setJobSearch(e.target.value)} placeholder="Search Job No"
+            className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200" />
+        </div>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="text-sm border border-slate-300 rounded-lg px-3 py-2">
+          {STATUS_FILTER_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 mb-4">
+        {STATUS_FILTER_OPTIONS.map((s) => (
+          <button key={s} onClick={() => setStatusFilter(s)}
+            className={`rounded-lg border px-2 py-2 text-center transition ${statusFilter === s ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}>
+            <div className="text-lg font-bold text-slate-900">{counts[s] || 0}</div>
+            <div className="text-[10px] text-slate-500 leading-tight">{s}</div>
+          </button>
+        ))}
+      </div>
+
+      {jobsLoading ? <div className="text-sm text-slate-400">Loading…</div> : (
+        <div className="overflow-x-auto rounded-lg border border-slate-200">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-slate-50 border-b border-slate-200">
+              {["Job No", "Buyer", "Supervisor", "Current Status", "Last Updated", "Action"].map((h) => <th key={h} className="text-left px-3 py-2 font-semibold text-slate-600 whitespace-nowrap">{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {filtered.map((j) => (
+                <tr key={j.job_no} className="border-b border-slate-100 last:border-0">
+                  <td className="px-3 py-2 font-medium text-blue-700">{j.job_no}</td>
+                  <td className="px-3 py-2">{j.buyer_no || "—"}</td>
+                  <td className="px-3 py-2">{j.supervisor_name || "—"}</td>
+                  <td className="px-3 py-2"><StatusBadgePill status={j.current_status || "Planned"} /></td>
+                  <td className="px-3 py-2 text-slate-400">{j.status_updated_at ? new Date(j.status_updated_at).toLocaleString() : "—"}</td>
+                  <td className="px-3 py-2"><button onClick={() => setActiveJob(String(j.job_no))} className="text-xs font-semibold text-blue-700 hover:underline">Open / Update</button></td>
+                </tr>
+              ))}
+              {!filtered.length && <tr><td colSpan={6}><EmptyState text="No jobs match this search/filter" /></td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeJob && (
+        <div className="mt-4 border-t border-slate-200 pt-4">
+          <div className="flex justify-end mb-2"><button onClick={() => setActiveJob("")} className="text-xs text-slate-400 hover:text-slate-600">Close</button></div>
+          <JobStatusSearch myJobs={myJobs} jobs={jobs} profile={profile} currency={currency}
+            onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory} onUpdateOperator={onUpdateOperator}
+            initialQuery={activeJob}
+            statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
+            allowedNextOnly canCorrect={false} canEditOperator />
+          <p className="text-[11px] text-slate-400 mt-2">Search Job No above using <b>{activeJob}</b> to open its full details and update it.</p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, jobs, jobsLoading, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving }) {
   const today = todayDhakaISO();
   const [showForm, setShowForm] = useState(false);
   const [filterDate, setFilterDate] = useState(today);
