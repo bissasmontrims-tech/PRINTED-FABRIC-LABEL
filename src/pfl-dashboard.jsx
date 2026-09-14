@@ -570,7 +570,8 @@ export default function PFLDashboard({ session, profile, onLogout }) {
 
   // `allowedNextOnly`: true for a Supervisor's own update (only the next
   // stage in STATUS_STAGES is permitted — no jumping); false for Admin
-  // correcting a status to anything. RLS still separately enforces WHO can
+  // correcting a status to anything. All active Supervisors can update any
+  // job returned by the Supervisor RLS policy. RLS still separately enforces WHO can
   // write which row regardless of what this flag allows client-side.
   async function updateJobStatus(jobNo, newStatus, updatedByName, allowedNextOnly) {
     setStatusError(""); setStatusSavedMsg("");
@@ -1679,7 +1680,7 @@ function OperatorUpdateBlock({ jobRow, onUpdateOperator, canEdit, actingName, st
         </div>
       )}
       {!canEdit && CUTTING_OPERATOR_STATUSES.includes(jobRow.current_status) && (
-        <p className="text-xs text-slate-400">Cutting Operator can only be changed by the owning Supervisor or an Admin.</p>
+        <p className="text-xs text-slate-400">All Supervisors can change the Cutting Operator name at the Cutting stage; Managers are view-only.</p>
       )}
     </div>
   );
@@ -1969,14 +1970,10 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
         {loading ? <div className="text-sm text-slate-400">Loading…</div> : <PendingJobsTable jobs={myJobs} showSupervisorCol={false} currency={currency} />}
       </Card>
 
-      <Card>
-        <SectionTitle>Job Status Update</SectionTitle>
-        <p className="text-xs text-slate-400 mb-3">A Job appears here only after you've submitted at least one entry for it above.</p>
-        <JobStatusSearch myJobs={myJobs} jobs={jobs} profile={profile} currency={currency}
-          onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory} onUpdateOperator={onUpdateOperator}
-          statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
-          allowedNextOnly canCorrect={false} canEditOperator />
-      </Card>
+      <SupervisorJobStatusBoard jobs={jobs} jobsLoading={jobsLoading} profile={profile} currency={currency}
+        myJobs={myJobs} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
+        onUpdateOperator={onUpdateOperator} statusError={statusError} statusSavedMsg={statusSavedMsg}
+        statusSaving={statusSaving} />
 
       <Card>
         <SectionTitle right={
