@@ -1752,7 +1752,7 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
   useEffect(() => {
     if (initialQuery) { setQuery(String(initialQuery)); setTimeout(() => {
       const q = String(initialQuery).trim();
-      const jobRow = jobs.find((j) => String(j.job_no) === q && (!scopeToUserId || j.user_id === scopeToUserId));
+      const jobRow = jobs.find((j) => String(j.job_no) === q && (!scopeToUserId || j.user_id === scopeToUserId) && (profile?.role !== "supervisor" || myJobs.some((x) => String(x.job_no) === q)));
       if (jobRow) {
         const jobAgg = myJobs.find((j) => String(j.job_no) === q) || { job_no: jobRow.job_no, buyer_no: jobRow.buyer_no || "", order_quantity: 0, produced: 0, pending: 0, lastDate: null, entries: [] };
         setResult({ jobAgg, jobRow }); setSearched(true); setPickedStatus("");
@@ -1765,13 +1765,10 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
     setHistoryOpen(false);
     const q = query.trim();
     if (!q) { setResult(null); return; }
-    const jobRow = jobs.find((j) => j.job_no === q && (!scopeToUserId || j.user_id === scopeToUserId));
+    const jobRow = jobs.find((j) => String(j.job_no) === q && (!scopeToUserId || j.user_id === scopeToUserId) && (profile?.role !== "supervisor" || myJobs.some((x) => String(x.job_no) === q)));
     if (!jobRow) { setResult(null); return; }
-    // Supervisors can now search/update any job returned by the Supervisor
-    // RLS policy, not only jobs belonging to their own supervisor account.
-    // Keep aggregate details when available; otherwise show the job safely
-    // with unavailable computed quantities as zero/blank rather than blocking
-    // the status/operator update.
+    // Supervisor searches are restricted to jobs that this login has actually
+    // submitted through Daily Plan. Admin remains unrestricted.
     const jobAgg = myJobs.find((j) => j.job_no === q) || {
       job_no: jobRow.job_no, buyer_no: jobRow.buyer_no || '', order_quantity: 0,
       produced: 0, pending: 0, lastDate: null, entries: []
@@ -1863,39 +1860,46 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
 
 /* ---- Supervisor view: "+ Add Entry", own totals, My Pending Jobs, My Entries ---- */
 
-function SupervisorJobStatusBoard({ jobs = [], jobsLoading = false, profile, currency, myJobs = [], onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving }) {
+function SupervisorJobStatusBoard({ jobs = [], jobsLoading = false, profile, currency, myJobs = [], dayEntries = [], onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving }) {
   const [statusFilter, setStatusFilter] = useState("All");
   const [jobSearch, setJobSearch] = useState("");
   const [activeJob, setActiveJob] = useState("");
 
+  // Show ONLY jobs submitted by THIS Supervisor on the currently selected
+  // Daily Plan date. Historical jobs appear only when the date filter changes.
+  // `dayEntries` is already restricted to this login's user_id by the parent.
+  const dayJobs = useMemo(() => jobAggregates(dayEntries), [dayEntries]);
+  const dayJobNos = useMemo(() => new Set(dayJobs.map((j) => String(j.job_no))), [dayJobs]);
+  const visibleJobs = useMemo(() => jobs.filter((j) => dayJobNos.has(String(j.job_no))), [jobs, dayJobNos]);
+
   const counts = useMemo(() => {
     const out = {};
     STATUS_FILTER_OPTIONS.forEach((s) => { out[s] = 0; });
-    for (const j of jobs) {
+    for (const j of visibleJobs) {
       const status = j.current_status || "Planned";
       out[status] = (out[status] || 0) + 1;
     }
-    out.Completed = jobs.filter((j) => {
-      const a = myJobs.find((x) => x.job_no === j.job_no);
+    out.Completed = visibleJobs.filter((j) => {
+      const a = dayJobs.find((x) => String(x.job_no) === String(j.job_no));
       return a && a.order_quantity > 0 && a.produced >= a.order_quantity;
     }).length;
-    out.All = jobs.length;
+    out.All = visibleJobs.length;
     return out;
-  }, [jobs, myJobs]);
+  }, [visibleJobs, dayJobs]);
 
   const filtered = useMemo(() => {
     const q = jobSearch.trim().toLowerCase();
-    return jobs.filter((j) => {
+    return visibleJobs.filter((j) => {
       const matchesStatus = statusFilter === "All" || (j.current_status || "Planned") === statusFilter;
       const matchesSearch = !q || String(j.job_no).toLowerCase().includes(q) || String(j.buyer_no || "").toLowerCase().includes(q) || String(j.supervisor_name || "").toLowerCase().includes(q);
       return matchesStatus && matchesSearch;
     });
-  }, [jobs, statusFilter, jobSearch]);
+  }, [visibleJobs, statusFilter, jobSearch]);
 
   return (
     <Card>
-      <SectionTitle>Job Status Update — All Supervisors</SectionTitle>
-      <p className="text-xs text-slate-400 mb-3">All active Supervisors can search, open, and update authorized job statuses. Cutting-stage operator names can also be updated manually.</p>
+      <SectionTitle>Job Status Update — Daily Submitted Jobs</SectionTitle>
+      <p className="text-xs text-slate-400 mb-3">Only jobs submitted by this Supervisor on the selected Daily Plan date are shown here. Change the date filter to view an earlier day.</p>
 
       <div className="flex flex-col sm:flex-row gap-3 mb-4">
         <div className="relative flex-1 max-w-xs">
@@ -1944,7 +1948,7 @@ function SupervisorJobStatusBoard({ jobs = [], jobsLoading = false, profile, cur
       {activeJob && (
         <div className="mt-4 border-t border-slate-200 pt-4">
           <div className="flex justify-end mb-2"><button onClick={() => setActiveJob("")} className="text-xs text-slate-400 hover:text-slate-600">Close</button></div>
-          <JobStatusSearch myJobs={myJobs} jobs={jobs} profile={profile} currency={currency}
+          <JobStatusSearch myJobs={dayJobs} jobs={jobs} profile={profile} currency={currency}
             onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory} onUpdateOperator={onUpdateOperator}
             initialQuery={activeJob}
             statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
@@ -2026,7 +2030,7 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
       </Card>
 
       <SupervisorJobStatusBoard jobs={jobs} jobsLoading={jobsLoading} profile={profile} currency={currency}
-        myJobs={myJobs} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
+        myJobs={myJobs} dayEntries={dayEntries} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
         onUpdateOperator={onUpdateOperator} statusError={statusError} statusSavedMsg={statusSavedMsg}
         statusSaving={statusSaving} />
 
