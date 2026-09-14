@@ -13,7 +13,7 @@ export function can(profile, action) {
     case "view_dashboard":
       return ROLES.includes(role);
     case "import_data":
-      return role === "admin" || role === "manager";
+      return role === "admin"; // Manager is strict view-only — cannot import/add/edit/delete anywhere.
     case "edit_data":
     case "delete_data":
     case "manage_users":
@@ -25,6 +25,11 @@ export function can(profile, action) {
       return role === "admin" || role === "manager";
     case "submit_own_daily_plan_entry":
       return role === "supervisor" && Boolean(profile.supervisor_name);
+    // Stage-operator names (Production/Printing/Cutting/QC) on a job —
+    // Admin can correct any job's; Supervisor only their own (further
+    // enforced by RLS via user_id = auth.uid()); Manager can see but never edit.
+    case "update_job_operator":
+      return role === "admin" || (role === "supervisor" && Boolean(profile.supervisor_name));
     // Nav visibility: admin or supervisor can always reach the page, even if
     // a supervisor's account isn't linked to a name yet — the page itself
     // explains that case rather than the nav item silently disappearing.

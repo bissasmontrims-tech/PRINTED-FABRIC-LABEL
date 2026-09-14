@@ -60,6 +60,13 @@ const CORE_MC_TYPES = ["Flexo", "Nylo", "Auto Screen"];
 // not part of this ordered workflow.
 const STATUS_STAGES = ["Planned", "Production Running", "Printing Complete", "Cutting Running", "Cutting Complete", "Handover to QC"];
 const STATUS_FILTER_OPTIONS = ["All", ...STATUS_STAGES, "Completed"];
+// Stage-specific operator fields on `jobs` (see manager_readonly_and_stage_operators.sql).
+// Cutting is the one with an active update control per the spec; the other
+// three are shown read-only in Job Details for completeness/future use.
+const OPERATOR_STAGE_FIELDS = { production: "production_operator", printing: "printing_operator", cutting: "cutting_operator", qc: "qc_operator" };
+const OPERATOR_STAGE_LABELS = { production: "Production Operator", printing: "Printing Operator", cutting: "Cutting Operator", qc: "QC Operator" };
+// A job's Cutting Operator becomes editable once it reaches any of these statuses.
+const CUTTING_OPERATOR_STATUSES = ["Cutting Running", "Cutting Complete", "Handover to QC"];
 const INK = "#1e293b";
 const MUTE = "#64748b";
 const LINE = "#e2e8f0";
@@ -167,6 +174,40 @@ function StatusBadge({ status }) {
     "Below $400": "bg-rose-50 text-rose-700 border-rose-200",
   };
   return <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${map[status] || "bg-slate-50 text-slate-600 border-slate-200"}`}>{status}</span>;
+}
+
+// Catches any render error in the currently active page and shows a Retry
+// card instead of letting the whole app unmount to a blank white screen —
+// the single most reliable fix for "blank page" bugs, since it works
+// regardless of which specific bug caused the crash. Automatically clears
+// itself when the sidebar selection (`pageKey`) changes, so navigating away
+// and back recovers without needing a full browser refresh.
+class PageErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) {
+    // eslint-disable-next-line no-console
+    console.error("Page render error:", error, info?.componentStack);
+  }
+  componentDidUpdate(prevProps) {
+    if (prevProps.pageKey !== this.props.pageKey && this.state.error) this.setState({ error: null });
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="max-w-md mx-auto mt-10 bg-white border border-rose-200 rounded-xl p-6 text-center shadow-sm">
+          <AlertTriangle className="mx-auto mb-3 text-rose-500" size={28} />
+          <h2 className="text-base font-semibold text-slate-800 mb-1">This page hit an unexpected error</h2>
+          <p className="text-sm text-slate-500 mb-4">{this.state.error.message || "Something went wrong while rendering this page."}</p>
+          <button onClick={() => this.setState({ error: null })}
+            className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition">
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function EmptyState({ text }) {
@@ -422,14 +463,28 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     if (!supabaseReady) return;
     setPlanLoading(true);
     setPlanError("");
-    const { data, error } = await supabase
-      .from("daily_plan_entries")
-      .select("*")
-      .order("plan_date", { ascending: false })
-      .order("id", { ascending: false });
-    if (error) { setPlanError(`Failed to load Daily Plan data: ${error.message}`); setPlanLoading(false); return; }
-    setPlanEntries(data);
-    setPlanLoading(false);
+    try {
+      const PAGE_SIZE = 1000;
+      const allRows = [];
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from("daily_plan_entries")
+          .select("*")
+          .order("plan_date", { ascending: false })
+          .order("id", { ascending: false })
+          .range(from, from + PAGE_SIZE - 1);
+        if (error) throw error;
+        allRows.push(...(data || []));
+        if (!data || data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+      setPlanEntries(allRows);
+    } catch (err) {
+      setPlanError(`Failed to load Daily Plan data: ${err.message}`);
+    } finally {
+      setPlanLoading(false);
+    }
   }, []);
 
   useEffect(() => { fetchPlanEntries(); }, [fetchPlanEntries]);
@@ -546,6 +601,31 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     const { data, error } = await supabase.from("job_status_history").select("*").eq("job_no", jobNo).order("updated_at", { ascending: true });
     if (error) return [];
     return data;
+  }
+
+  // Updates one stage's operator name on a job (e.g. Cutting Operator) and
+  // logs the change into the same status-history log so nothing is lost —
+  // reuses job_status_history rather than adding a whole new table for it.
+  async function updateJobOperator(jobNo, stageKey, newName, actingName) {
+    const field = OPERATOR_STAGE_FIELDS[stageKey];
+    if (!field) return false;
+    setStatusError(""); setStatusSavedMsg("");
+    const job = jobs.find((j) => j.job_no === jobNo);
+    const previous = job?.[field] || "—";
+    setStatusSaving(true);
+    const { error: updateErr } = await supabase.from("jobs").update({ [field]: newName }).eq("job_no", jobNo);
+    if (updateErr) { setStatusSaving(false); setStatusError(`Operator update failed: ${updateErr.message}`); return false; }
+    const { error: histErr } = await supabase.from("job_status_history").insert({
+      job_no: jobNo,
+      status: `${OPERATOR_STAGE_LABELS[stageKey]} Updated: ${previous} → ${newName}`,
+      updated_by: session?.user?.id || null,
+      updated_by_name: actingName || null,
+    });
+    setStatusSaving(false);
+    if (histErr) { setStatusError(`Operator saved, but history log failed: ${histErr.message}`); }
+    setStatusSavedMsg("Operator Updated Successfully");
+    await fetchJobs();
+    return true;
   }
 
   const allDates = useMemo(() => uniqSorted(rawData.map((r) => r.date)), [rawData]);
@@ -1069,6 +1149,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
         </div>
 
         <main className="flex-1 p-4 lg:p-6 overflow-x-hidden">
+          <PageErrorBoundary pageKey={page}>
           {page === "overview" && (
             <OverviewPage kpi={kpi} settings={settings} alerts={alerts} operatorRows={coreOperatorRows} below50kPcsOps={below50kPcsOps} belowTargetOps={belowTargetOps} topOps={topOps} dailySeries={dailySeries} mcTypeRows={mcTypeRows} dailyTargetInfo={dailyTargetInfo} />
           )}
@@ -1080,7 +1161,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
             error={planError} savedMsg={planSavedMsg} onSubmit={submitPlanEntry}
             onUpdate={updatePlanEntry} onDelete={deletePlanEntry} currency={settings.currency}
             supervisorDirectory={supervisorDirectory}
-            jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={updateJobStatus} onFetchHistory={fetchJobHistory}
+            jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={updateJobStatus} onFetchHistory={fetchJobHistory} onUpdateOperator={updateJobOperator}
             statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />
           )}
           {page === "operators" && (
@@ -1088,7 +1169,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
               selectedOperator={selectedOperator} setSelectedOperator={setSelectedOperator}
               operatorScoped={operatorScoped} latestDate={latestDate} />
           )}
-          {page === "machines" && <BreakdownPage title="Machine" rows={machineRows} labelKey="machine" />}
+          {page === "machines" && <BreakdownPage title="Machine" rows={machineRows} labelKey="machine" stacked />}
           {page === "mctype" && <BreakdownPage title="MC Type" rows={mcTypeRows} labelKey="mcType" />}
           {page === "shift" && <BreakdownPage title="Shift" rows={shiftRows} labelKey="shift" />}
           {page === "buyers" && <BreakdownPage title="Buyer" rows={buyerRows} labelKey="buyer" stacked />}
@@ -1103,6 +1184,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
           )}
           {page === "users" && can(profile, "manage_users") && <UserManagement />}
           {page === "settings" && <SettingsPage settings={settings} setSettings={setSettings} canEdit={can(profile, "edit_data")} />}
+          </PageErrorBoundary>
         </main>
       </div>
     </div>
@@ -1516,7 +1598,7 @@ function EntryForm({ onSubmit, onCancel, saving, myJobs, extraFields }) {
   );
 }
 
-function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, supervisorDirectory, jobs, jobsLoading, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving }) {
+function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, supervisorDirectory, jobs, jobsLoading, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving }) {
   if (profile.role === "supervisor" && !profile.supervisor_name) {
     return (
       <Card className="max-w-lg">
@@ -1528,13 +1610,13 @@ function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg,
     );
   }
   return (profile.role === "admin" || profile.role === "manager")
-    ? <AdminDailyPlanView readOnly={profile.role === "manager"} canCorrectStatus={profile.role === "admin"} title={profile.role === "manager" ? "Manager view" : "Admin view"} planEntries={planEntries} loading={loading} saving={saving} error={error} savedMsg={savedMsg}
+    ? <AdminDailyPlanView readOnly={profile.role === "manager"} canCorrectStatus={profile.role === "admin"} canEditOperator={profile.role === "admin"} title={profile.role === "manager" ? "Manager view" : "Admin view"} planEntries={planEntries} loading={loading} saving={saving} error={error} savedMsg={savedMsg}
         onSubmit={onSubmit} onDelete={onDelete} currency={currency} supervisorDirectory={supervisorDirectory}
-        jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
+        jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory} onUpdateOperator={onUpdateOperator}
         statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />
     : <SupervisorDailyPlanView profile={profile} planEntries={planEntries} loading={loading} saving={saving} error={error}
         savedMsg={savedMsg} onSubmit={onSubmit} onUpdate={onUpdate} onDelete={onDelete} currency={currency}
-        jobs={jobs} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
+        jobs={jobs} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory} onUpdateOperator={onUpdateOperator}
         statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />;
 }
 
@@ -1564,7 +1646,46 @@ function StatusHistoryList({ history }) {
 // Search is client-side over `myJobs`/`jobs`, which for a Supervisor RLS has
 // already limited to their own rows — this is a UX convenience on top of
 // that, not the actual security boundary.
-function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving, scopeToUserId, allowedNextOnly, canCorrect }) {
+function OperatorUpdateBlock({ jobRow, onUpdateOperator, canEdit, actingName, statusSaving, onSaved }) {
+  const [cuttingName, setCuttingName] = useState(jobRow.cutting_operator || "");
+  const showCuttingEditor = canEdit && CUTTING_OPERATOR_STATUSES.includes(jobRow.current_status);
+
+  async function saveCutting() {
+    if (!cuttingName.trim()) return;
+    const ok = await onUpdateOperator(jobRow.job_no, "cutting", cuttingName.trim(), actingName);
+    if (ok && onSaved) onSaved({ cutting_operator: cuttingName.trim() });
+  }
+
+  return (
+    <div className="pt-3 border-t border-slate-200 mt-3">
+      <div className="text-sm font-semibold text-slate-700 mb-2">Operator Names</div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-3">
+        {Object.entries(OPERATOR_STAGE_LABELS).map(([key, label]) => (
+          <div key={key}>
+            <span className="text-slate-400 block text-xs">{label}</span>
+            {jobRow[OPERATOR_STAGE_FIELDS[key]] || "—"}
+          </div>
+        ))}
+      </div>
+      {showCuttingEditor && (
+        <div className="flex gap-2 items-center flex-wrap">
+          <input type="text" value={cuttingName} onChange={(e) => setCuttingName(e.target.value)}
+            placeholder="Enter Cutting Operator Name"
+            className="text-sm border border-slate-300 rounded-lg px-3 py-2 flex-1 max-w-xs focus:outline-none focus:ring-2 focus:ring-blue-200" />
+          <button onClick={saveCutting} disabled={!cuttingName.trim() || statusSaving}
+            className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-semibold hover:bg-slate-900 disabled:opacity-50">
+            Update Operator Name
+          </button>
+        </div>
+      )}
+      {!canEdit && CUTTING_OPERATOR_STATUSES.includes(jobRow.current_status) && (
+        <p className="text-xs text-slate-400">Cutting Operator can only be changed by the owning Supervisor or an Admin.</p>
+      )}
+    </div>
+  );
+}
+
+function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving, scopeToUserId, allowedNextOnly, canCorrect, canEditOperator }) {
   const [query, setQuery] = useState("");
   const [searched, setSearched] = useState(false);
   const [result, setResult] = useState(null);
@@ -1653,6 +1774,10 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
             {statusSavedMsg && <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mt-2">{statusSavedMsg}</div>}
           </div>
 
+          <OperatorUpdateBlock jobRow={result.jobRow} onUpdateOperator={onUpdateOperator} canEdit={Boolean(canEditOperator)}
+            actingName={profile.supervisor_name || profile.email} statusSaving={statusSaving}
+            onSaved={(patch) => setResult((r) => ({ ...r, jobRow: { ...r.jobRow, ...patch } }))} />
+
           <button onClick={loadHistory} className="text-xs text-blue-600 hover:underline mt-3">{historyOpen ? "Hide" : "View"} Status History</button>
           {historyOpen && <StatusHistoryList history={history} />}
         </div>
@@ -1662,7 +1787,7 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
 }
 
 /* ---- Supervisor view: "+ Add Entry", own totals, My Pending Jobs, My Entries ---- */
-function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, jobs, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving }) {
+function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, jobs, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving }) {
   const today = todayDhakaISO();
   const [showForm, setShowForm] = useState(false);
   const [filterDate, setFilterDate] = useState(today);
@@ -1673,12 +1798,16 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
   const myJobs = useMemo(() => jobAggregates(myEntries), [myEntries]);
   const dayEntries = useMemo(() => myEntries.filter((e) => e.plan_date === filterDate), [myEntries, filterDate]);
 
-  // All-time totals (not date-scoped) — pending is inherently cumulative
-  // across days, so "today only" totals would misrepresent it.
-  const totalOrder = myJobs.reduce((s, j) => s + j.order_quantity, 0);
-  const totalProduced = myEntries.reduce((s, e) => s + (Number(e.challan_quantity) || 0), 0);
-  const totalUsd = myEntries.reduce((s, e) => s + (Number(e.production_usd) || 0), 0);
-  const totalPending = myJobs.reduce((s, j) => s + j.pending, 0); // sum of PER-JOB pending, each floored at 0
+  // Total Production USD / Order PCS / Production PCS follow the SELECTED
+  // DATE only — never all-time history — per explicit requirement. Change
+  // the date picker above "My Entries" and these three figures change with
+  // it; a date with no entries correctly shows $0.00, not a fallback.
+  // "My Pending Jobs" below is deliberately NOT date-scoped — job-wise
+  // pending is inherently cumulative across every day that job was worked.
+  const totalOrder = dayEntries.reduce((s, e) => s + (Number(e.order_quantity) || 0), 0);
+  const totalProduced = dayEntries.reduce((s, e) => s + (Number(e.challan_quantity) || 0), 0);
+  const totalUsd = dayEntries.reduce((s, e) => s + (Number(e.production_usd) || 0), 0);
+  const totalPending = myJobs.reduce((s, j) => s + j.pending, 0); // sum of PER-JOB pending, each floored at 0 — all-time by design
 
   async function handleSubmit(payload) {
     const ok = await onSubmit({ ...payload, plan_date: today });
@@ -1709,15 +1838,21 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
         {savedMsg && !showForm && <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mt-3">{savedMsg}</div>}
       </Card>
 
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h3 className="text-sm font-semibold text-slate-600">Totals for:</h3>
+        <input type="date" value={filterDate} onChange={(e) => setFilterDate(e.target.value)}
+          className="text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200" />
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <KpiCard label="Total Production USD" value={fmtUsd(totalUsd, currency)} />
-        <KpiCard label="Total Order PCS" value={fmtInt(totalOrder)} />
-        <KpiCard label="Total Production PCS" value={fmtInt(totalProduced)} />
-        <KpiCard label="Total Pending PCS" value={fmtInt(totalPending)} tone={totalPending > 0 ? "warn" : "good"} />
+        <KpiCard label={`Production USD (${fmtDate(filterDate)})`} value={fmtUsd(totalUsd, currency)} />
+        <KpiCard label={`Order PCS (${fmtDate(filterDate)})`} value={fmtInt(totalOrder)} />
+        <KpiCard label={`Production PCS (${fmtDate(filterDate)})`} value={fmtInt(totalProduced)} />
+        <KpiCard label="Total Pending PCS (all dates)" value={fmtInt(totalPending)} tone={totalPending > 0 ? "warn" : "good"} />
       </div>
 
       <Card>
         <SectionTitle>My Pending Jobs</SectionTitle>
+        <p className="text-xs text-slate-400 mb-3">Cumulative across every date this job has been worked — not limited to the date selected above.</p>
         {loading ? <div className="text-sm text-slate-400">Loading…</div> : <PendingJobsTable jobs={myJobs} showSupervisorCol={false} currency={currency} />}
       </Card>
 
@@ -1725,9 +1860,9 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
         <SectionTitle>Job Status Update</SectionTitle>
         <p className="text-xs text-slate-400 mb-3">A Job appears here only after you've submitted at least one entry for it above.</p>
         <JobStatusSearch myJobs={myJobs} jobs={jobs} profile={profile} currency={currency}
-          onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory}
+          onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory} onUpdateOperator={onUpdateOperator}
           statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
-          scopeToUserId={profile.id} allowedNextOnly canCorrect={false} />
+          scopeToUserId={profile.id} allowedNextOnly canCorrect={false} canEditOperator />
       </Card>
 
       <Card>
@@ -1804,6 +1939,10 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
       current_status: statusRow?.current_status || "Planned",
       status_updated_at: statusRow?.status_updated_at || null,
       status_updated_by_name: statusRow?.status_updated_by_name || null,
+      production_operator: statusRow?.production_operator || null,
+      printing_operator: statusRow?.printing_operator || null,
+      cutting_operator: statusRow?.cutting_operator || null,
+      qc_operator: statusRow?.qc_operator || null,
     };
   }), [allJobs, jobs]);
 
@@ -2084,7 +2223,10 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
             </div>
           )}
 
-          <div className="text-sm font-semibold text-slate-700 mb-2">Status History</div>
+          <OperatorUpdateBlock jobRow={detailJob} onUpdateOperator={onUpdateOperator} canEdit={Boolean(canEditOperator)}
+            actingName="Admin" statusSaving={statusSaving} />
+
+          <div className="text-sm font-semibold text-slate-700 mb-2 mt-3">Status History</div>
           <StatusHistoryList history={detailHistory} />
         </Card>
       )}

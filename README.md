@@ -260,6 +260,72 @@ readable.
 The Overview date filter now defaults to **Today** on load and after
 Reset — it previously defaulted to "All Dates".
 
+## This update: Manager view-only, Cutting Operator, crash-proofing
+
+Run `supabase/manager_readonly_and_stage_operators.sql` once (after
+`schema.sql`, `daily_plan_entries.sql`, and `job_status.sql`) — it drops the
+two policies that let Manager write to `production_data` (an artifact of an
+earlier, looser spec) and adds four nullable operator-name columns to
+`jobs`.
+
+- **Manager is now genuinely view-only everywhere** — enforced by RLS, not
+  just hidden buttons. `import_data` (which also gates Add/Edit/Delete
+  Daily Plan buttons) now checks `role === "admin"` only.
+- **Supervisor's Total Production USD, Order PCS, and Production PCS are
+  now strictly scoped to the selected date** — previously they summed all
+  history, which was wrong. The date picker sits directly above those KPI
+  cards. "My Pending Jobs" stays all-time, since job-wise pending is
+  inherently cumulative across every day a job was worked — that's a
+  different, deliberate scope, not an inconsistency.
+- **Cutting Operator Name**: editable once a job reaches Cutting Running,
+  Cutting Complete, or Handover to QC — by the owning Supervisor or Admin
+  only. Every change is logged into the existing status-history log (no new
+  table). Production/Printing/QC operator fields exist in the schema for
+  the same pattern later, shown read-only for now.
+- **A page can no longer go blank on error.** Every page is now wrapped in
+  a React error boundary — if something throws during render, that page
+  shows a "Retry" card instead of unmounting the whole app to white.
+- `daily_plan_entries` now paginates past Supabase's 1000-row response cap,
+  matching `production_data`'s existing pagination.
+- Machine Performance now uses the same Top-10 + "View More" horizontal
+  bar layout as Buyer/Customer Analysis, instead of squeezing every machine
+  into rotated labels.
+
+## Manager is now strict view-only; Cutting Operator tracking
+
+Run `supabase/manager_readonly_and_stage_operators.sql` once (after
+`schema.sql`, `daily_plan_entries.sql`, and `job_status.sql`). It does two
+things:
+
+1. **Drops Manager's write policies on `production_data`** — an earlier
+   version of the schema had granted Manager `insert`/`update` there (for
+   import support); Manager is now strictly `SELECT`-only everywhere,
+   matching the final role rule (`import_data` in `permissions.js` is now
+   admin-only too). Nothing on `daily_plan_entries`/`jobs`/
+   `job_status_history` needed to change — those were already Manager-read-only.
+2. **Adds four nullable columns to `jobs`**: `production_operator`,
+   `printing_operator`, `cutting_operator`, `qc_operator`. Existing rows get
+   `NULL` until someone records a name — no data is touched.
+
+**Cutting Operator**: editable once a job reaches Cutting Running / Cutting
+Complete / Handover to QC, by the owning Supervisor or Admin only (Manager
+sees the value, never an edit control — enforced by RLS via the existing
+`jobs` update policies, not just hidden in the UI). Changes are logged into
+the existing `job_status_history` table as a readable line (e.g. *"Cutting
+Operator Updated: Rahim → Karim"*) rather than a new table.
+
+**Supervisor's Total Production USD** is now strictly scoped to whichever
+date is selected (defaults to today, Asia/Dhaka) — it previously summed
+all-time history, which was wrong. "My Pending Jobs" is deliberately still
+all-time, since job-wise pending is inherently cumulative across days.
+
+**Never a blank page**: the app previously had no error boundary anywhere,
+so any single uncaught render error would unmount the whole page to white.
+Every page is now wrapped in a `PageErrorBoundary` that catches render
+errors and shows a "This page hit an unexpected error" card with Retry,
+instead of a blank screen — and it resets automatically when you switch
+sidebar pages.
+
 ## Job Status workflow
 
 Run `supabase/job_status.sql` once (after `schema.sql` and
