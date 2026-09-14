@@ -546,10 +546,65 @@ export default function PFLDashboard({ session, profile, onLogout }) {
 
   async function deletePlanEntry(id) {
     setPlanSaving(true); setPlanError("");
-    const { error } = await supabase.from("daily_plan_entries").delete().eq("id", id);
-    setPlanSaving(false);
-    if (error) { setPlanError(`Delete failed: ${error.message}`); return; }
-    await fetchPlanEntries();
+    try {
+      // Admin deletion is a real database delete. If this was the last
+      // Daily Plan entry for the Job No, also remove the workflow Job row
+      // and every related status-history row so a deleted job cannot reappear
+      // in Job Status / Supervisor views.
+      let entry = null;
+      if (profile?.role === "admin") {
+        const { data: entryRow, error: readErr } = await supabase
+          .from("daily_plan_entries").select("id, job_no").eq("id", id).maybeSingle();
+        if (readErr) throw readErr;
+        entry = entryRow;
+      }
+
+      const { error } = await supabase.from("daily_plan_entries").delete().eq("id", id);
+      if (error) throw error;
+
+      if (profile?.role === "admin" && entry?.job_no) {
+        const { data: remaining, error: remainErr } = await supabase
+          .from("daily_plan_entries").select("id").eq("job_no", entry.job_no).limit(1);
+        if (remainErr) throw remainErr;
+        if (!remaining?.length) {
+          const { error: histErr } = await supabase.from("job_status_history").delete().eq("job_no", entry.job_no);
+          if (histErr) throw histErr;
+          const { error: jobErr } = await supabase.from("jobs").delete().eq("job_no", entry.job_no);
+          if (jobErr) throw jobErr;
+        }
+      }
+
+      await fetchPlanEntries();
+      await fetchJobs();
+    } catch (err) {
+      setPlanError(`Delete failed: ${err.message}`);
+    } finally {
+      setPlanSaving(false);
+    }
+  }
+
+  async function adminDeleteJob(jobNo) {
+    if (profile?.role !== "admin" || !jobNo) return false;
+    setStatusError(""); setStatusSavedMsg("");
+    if (!window.confirm(`Permanently delete Job ${jobNo}?\n\nThis will delete the Job, all related Status History, and its Daily Plan entries. This cannot be undone.`)) return false;
+    setStatusSaving(true);
+    try {
+      const { error: histErr } = await supabase.from("job_status_history").delete().eq("job_no", jobNo);
+      if (histErr) throw histErr;
+      const { error: planErr } = await supabase.from("daily_plan_entries").delete().eq("job_no", jobNo);
+      if (planErr) throw planErr;
+      const { error: jobErr } = await supabase.from("jobs").delete().eq("job_no", jobNo);
+      if (jobErr) throw jobErr;
+      setStatusSavedMsg(`Job ${jobNo} permanently deleted.`);
+      await fetchJobs();
+      await fetchPlanEntries();
+      return true;
+    } catch (err) {
+      setStatusError(`Permanent delete failed: ${err.message}`);
+      return false;
+    } finally {
+      setStatusSaving(false);
+    }
   }
 
   /* ---------- Job Status workflow ---------- */
@@ -1161,7 +1216,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
             <DailyPlanPage profile={profile} planEntries={planEntries} loading={planLoading} saving={planSaving}
             error={planError} savedMsg={planSavedMsg} onSubmit={submitPlanEntry}
             onUpdate={updatePlanEntry} onDelete={deletePlanEntry} currency={settings.currency}
-            supervisorDirectory={supervisorDirectory}
+            supervisorDirectory={supervisorDirectory} onDeleteJob={adminDeleteJob}
             jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={updateJobStatus} onFetchHistory={fetchJobHistory} onUpdateOperator={updateJobOperator}
             statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />
           )}
@@ -1599,7 +1654,7 @@ function EntryForm({ onSubmit, onCancel, saving, myJobs, extraFields }) {
   );
 }
 
-function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, currency, supervisorDirectory, jobs, jobsLoading, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving }) {
+function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg, onSubmit, onUpdate, onDelete, onDeleteJob, currency, supervisorDirectory, jobs, jobsLoading, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving }) {
   if (profile.role === "supervisor" && !profile.supervisor_name) {
     return (
       <Card className="max-w-lg">
@@ -1612,7 +1667,7 @@ function DailyPlanPage({ profile, planEntries, loading, saving, error, savedMsg,
   }
   return (profile.role === "admin" || profile.role === "manager")
     ? <AdminDailyPlanView readOnly={profile.role === "manager"} canCorrectStatus={profile.role === "admin"} canEditOperator={profile.role === "admin"} title={profile.role === "manager" ? "Manager view" : "Admin view"} planEntries={planEntries} loading={loading} saving={saving} error={error} savedMsg={savedMsg}
-        onSubmit={onSubmit} onDelete={onDelete} currency={currency} supervisorDirectory={supervisorDirectory}
+        onSubmit={onSubmit} onDelete={onDelete} onDeleteJob={onDeleteJob} currency={currency} supervisorDirectory={supervisorDirectory}
         jobs={jobs} jobsLoading={jobsLoading} onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory} onUpdateOperator={onUpdateOperator}
         statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving} />
     : <SupervisorDailyPlanView profile={profile} planEntries={planEntries} loading={loading} saving={saving} error={error}
@@ -2016,7 +2071,7 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
 }
 
 /* ---- Admin view: overall + supervisor-wise summary, drill-down, global Pending Jobs, own Add Entry ---- */
-function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, currency, supervisorDirectory, readOnly = false, title = "Admin view", jobs = [], jobsLoading, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving, canCorrectStatus = false, canEditOperator = false }) {
+function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, onDeleteJob, currency, supervisorDirectory, readOnly = false, title = "Admin view", jobs = [], jobsLoading, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving, canCorrectStatus = false, canEditOperator = false }) {
   const latestEntryDate = useMemo(() => {
     const dates = uniqSorted(planEntries.map((e) => e.plan_date));
     return dates[dates.length - 1] || todayDhakaISO();
@@ -2330,6 +2385,16 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
               <button onClick={confirmDetailStatus} disabled={!detailPicked || statusSaving} className="px-4 py-1.5 rounded-lg bg-blue-600 text-white text-sm font-semibold disabled:opacity-50">Confirm Update</button>
               {statusError && <span className="text-xs text-rose-600">{statusError}</span>}
               {statusSavedMsg && <span className="text-xs text-emerald-600">{statusSavedMsg}</span>}
+            </div>
+          )}
+
+          {!readOnly && onDeleteJob && (
+            <div className="mb-4 pb-4 border-b border-slate-200">
+              <button onClick={() => onDeleteJob(detailJob.job_no)} disabled={statusSaving || saving}
+                className="px-4 py-1.5 rounded-lg bg-rose-600 text-white text-sm font-semibold hover:bg-rose-700 disabled:opacity-50">
+                Permanently Delete Job
+              </button>
+              <p className="text-[11px] text-slate-400 mt-1">Deletes this Job, its Daily Plan entries, and all Status History permanently.</p>
             </div>
           )}
 
