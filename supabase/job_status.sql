@@ -126,3 +126,47 @@ create policy "job_status_history: supervisor insert own" on public.job_status_h
 -- ============================================================================
 -- End. See the README's "Job Status" section for the workflow this enables.
 -- ============================================================================
+
+-- ============================================================================
+-- Supervisor cross-supervisor Job Status / Operator update access
+-- ============================================================================
+-- All active Supervisor accounts may view and update Job Status and the
+-- stage-operator fields for any job. This intentionally does NOT grant them
+-- Admin permissions or access to production/Daily Plan writes.
+-- ============================================================================
+drop policy if exists "jobs: supervisor select own" on public.jobs;
+drop policy if exists "jobs: supervisor select all" on public.jobs;
+create policy "jobs: supervisor select all" on public.jobs
+  for select using (
+    public.current_role() = 'supervisor'
+    and public.is_active_user()
+  );
+
+drop policy if exists "jobs: supervisor update own" on public.jobs;
+drop policy if exists "jobs: supervisor update all" on public.jobs;
+create policy "jobs: supervisor update all" on public.jobs
+  for update using (
+    public.current_role() = 'supervisor'
+    and public.is_active_user()
+  )
+  with check (
+    public.current_role() = 'supervisor'
+    and public.is_active_user()
+  );
+
+drop policy if exists "job_status_history: supervisor select own" on public.job_status_history;
+drop policy if exists "job_status_history: supervisor select all" on public.job_status_history;
+create policy "job_status_history: supervisor select all" on public.job_status_history
+  for select using (
+    public.current_role() = 'supervisor'
+    and public.is_active_user()
+  );
+
+drop policy if exists "job_status_history: supervisor insert own" on public.job_status_history;
+drop policy if exists "job_status_history: supervisor insert all" on public.job_status_history;
+create policy "job_status_history: supervisor insert all" on public.job_status_history
+  for insert with check (
+    public.current_role() = 'supervisor'
+    and public.is_active_user()
+    and updated_by = auth.uid()
+  );

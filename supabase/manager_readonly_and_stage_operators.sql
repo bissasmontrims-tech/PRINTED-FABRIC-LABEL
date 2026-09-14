@@ -33,8 +33,9 @@ alter table public.jobs add column if not exists qc_operator        text;
 -- row, already covered by the existing policies in job_status.sql —
 -- Admin: full access. Manager: SELECT only (can see the values, cannot
 -- write them — enforced at the database level, not just a hidden button).
--- Supervisor: SELECT/UPDATE only their own job (user_id = auth.uid()), so a
--- Supervisor can only ever set an operator name on a job they own.
+-- Supervisor: SELECT/UPDATE access to jobs is governed by job_status.sql.
+-- All active Supervisors may update Job Status and stage operator names;
+-- Manager remains SELECT-only.
 
 -- ============================================================================
 -- End.

@@ -1640,7 +1640,7 @@ function StatusHistoryList({ history }) {
 }
 
 // Shared "Search Job No" + job card + status-update UI, used by both the
-// Supervisor's own view (scopeToUserId set, allowedNextOnly — can only
+// Supervisor view (all authorized jobs, allowedNextOnly — can only
 // advance one stage at a time) and Admin's job details (no scope, canCorrect
 // — can jump to any stage, per "Admin can correct a status when necessary").
 // Search is client-side over `myJobs`/`jobs`, which for a Supervisor RLS has
@@ -1698,9 +1698,17 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
     setHistoryOpen(false);
     const q = query.trim();
     if (!q) { setResult(null); return; }
-    const jobAgg = myJobs.find((j) => j.job_no === q);
     const jobRow = jobs.find((j) => j.job_no === q && (!scopeToUserId || j.user_id === scopeToUserId));
-    if (!jobAgg || !jobRow) { setResult(null); return; }
+    if (!jobRow) { setResult(null); return; }
+    // Supervisors can now search/update any job returned by the Supervisor
+    // RLS policy, not only jobs belonging to their own supervisor account.
+    // Keep aggregate details when available; otherwise show the job safely
+    // with unavailable computed quantities as zero/blank rather than blocking
+    // the status/operator update.
+    const jobAgg = myJobs.find((j) => j.job_no === q) || {
+      job_no: jobRow.job_no, buyer_no: jobRow.buyer_no || '', order_quantity: 0,
+      produced: 0, pending: 0, lastDate: null, entries: []
+    };
     setResult({ jobAgg, jobRow });
     setPickedStatus("");
   }
@@ -1862,7 +1870,7 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
         <JobStatusSearch myJobs={myJobs} jobs={jobs} profile={profile} currency={currency}
           onUpdateStatus={onUpdateStatus} onFetchHistory={onFetchHistory} onUpdateOperator={onUpdateOperator}
           statusError={statusError} statusSavedMsg={statusSavedMsg} statusSaving={statusSaving}
-          scopeToUserId={profile.id} allowedNextOnly canCorrect={false} canEditOperator />
+          allowedNextOnly canCorrect={false} canEditOperator />
       </Card>
 
       <Card>
