@@ -1906,7 +1906,7 @@ function SupervisorDailyPlanView({ profile, planEntries, loading, saving, error,
 }
 
 /* ---- Admin view: overall + supervisor-wise summary, drill-down, global Pending Jobs, own Add Entry ---- */
-function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, currency, supervisorDirectory, readOnly = false, title = "Admin view", jobs = [], jobsLoading, onUpdateStatus, onFetchHistory, statusError, statusSavedMsg, statusSaving, canCorrectStatus = false }) {
+function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onSubmit, onDelete, currency, supervisorDirectory, readOnly = false, title = "Admin view", jobs = [], jobsLoading, onUpdateStatus, onFetchHistory, onUpdateOperator, statusError, statusSavedMsg, statusSaving, canCorrectStatus = false, canEditOperator = false }) {
   const latestEntryDate = useMemo(() => {
     const dates = uniqSorted(planEntries.map((e) => e.plan_date));
     return dates[dates.length - 1] || todayDhakaISO();
