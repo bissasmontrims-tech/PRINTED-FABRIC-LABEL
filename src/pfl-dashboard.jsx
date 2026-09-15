@@ -1703,13 +1703,34 @@ function StatusHistoryList({ history }) {
 // already limited to their own rows — this is a UX convenience on top of
 // that, not the actual security boundary.
 function OperatorUpdateBlock({ jobRow, onUpdateOperator, canEdit, actingName, statusSaving, onSaved }) {
-  const [cuttingName, setCuttingName] = useState(jobRow.cutting_operator || "");
-  const showCuttingEditor = canEdit && CUTTING_OPERATOR_STATUSES.includes(jobRow.current_status);
+  const [names, setNames] = useState({
+    production: jobRow.production_operator || "",
+    printing: jobRow.printing_operator || "",
+    cutting: jobRow.cutting_operator || "",
+    qc: jobRow.qc_operator || "",
+  });
 
-  async function saveCutting() {
-    if (!cuttingName.trim()) return;
-    const ok = await onUpdateOperator(jobRow.job_no, "cutting", cuttingName.trim(), actingName);
-    if (ok && onSaved) onSaved({ cutting_operator: cuttingName.trim() });
+  useEffect(() => {
+    setNames({
+      production: jobRow.production_operator || "",
+      printing: jobRow.printing_operator || "",
+      cutting: jobRow.cutting_operator || "",
+      qc: jobRow.qc_operator || "",
+    });
+  }, [jobRow.job_no, jobRow.production_operator, jobRow.printing_operator, jobRow.cutting_operator, jobRow.qc_operator]);
+
+  const stageEditable = {
+    production: ["Production Running", "Printing Complete", "Cutting Running", "Cutting Complete", "Handover to QC"],
+    printing: ["Printing Complete", "Cutting Running", "Cutting Complete", "Handover to QC"],
+    cutting: CUTTING_OPERATOR_STATUSES,
+    qc: ["Handover to QC"],
+  };
+
+  async function saveStage(stageKey) {
+    const name = names[stageKey].trim();
+    if (!name) return;
+    const ok = await onUpdateOperator(jobRow.job_no, stageKey, name, actingName);
+    if (ok && onSaved) onSaved({ [OPERATOR_STAGE_FIELDS[stageKey]]: name });
   }
 
   return (
@@ -1719,23 +1740,33 @@ function OperatorUpdateBlock({ jobRow, onUpdateOperator, canEdit, actingName, st
         {Object.entries(OPERATOR_STAGE_LABELS).map(([key, label]) => (
           <div key={key}>
             <span className="text-slate-400 block text-xs">{label}</span>
-            {jobRow[OPERATOR_STAGE_FIELDS[key]] || "—"}
+            {names[key] || "—"}
           </div>
         ))}
       </div>
-      {showCuttingEditor && (
-        <div className="flex gap-2 items-center flex-wrap">
-          <input type="text" value={cuttingName} onChange={(e) => setCuttingName(e.target.value)}
-            placeholder="Enter Cutting Operator Name"
-            className="text-sm border border-slate-300 rounded-lg px-3 py-2 flex-1 max-w-xs focus:outline-none focus:ring-2 focus:ring-blue-200" />
-          <button onClick={saveCutting} disabled={!cuttingName.trim() || statusSaving}
-            className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-semibold hover:bg-slate-900 disabled:opacity-50">
-            Update Operator Name
-          </button>
+
+      {canEdit && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {Object.entries(OPERATOR_STAGE_LABELS).map(([key, label]) => {
+            const allowed = stageEditable[key].includes(jobRow.current_status);
+            if (!allowed) return null;
+            return (
+              <div key={key} className="flex gap-2 items-center flex-wrap">
+                <input type="text" value={names[key]} onChange={(e) => setNames((n) => ({ ...n, [key]: e.target.value }))}
+                  placeholder={`Enter ${label} Name`}
+                  className="text-sm border border-slate-300 rounded-lg px-3 py-2 flex-1 min-w-[180px] focus:outline-none focus:ring-2 focus:ring-blue-200" />
+                <button onClick={() => saveStage(key)} disabled={!names[key].trim() || statusSaving}
+                  className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-semibold hover:bg-slate-900 disabled:opacity-50">
+                  Update {label}
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
-      {!canEdit && CUTTING_OPERATOR_STATUSES.includes(jobRow.current_status) && (
-        <p className="text-xs text-slate-400">All Supervisors can change the Cutting Operator name at the Cutting stage; Managers are view-only.</p>
+
+      {!canEdit && (
+        <p className="text-xs text-slate-400">Operator names are view-only for Managers. Supervisors can update the applicable stage operator name.</p>
       )}
     </div>
   );
@@ -1785,6 +1816,12 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
 
   const nextStage = result ? STATUS_STAGES[STATUS_STAGES.indexOf(result.jobRow.current_status) + 1] : null;
   const lastEntry = result?.jobAgg.entries.find((e) => e.plan_date === result.jobAgg.lastDate);
+  const displayJobRow = result ? {
+    ...result.jobRow,
+    // The original Daily Plan/production entry's Operator Name is the production operator.
+    // Use it as a fallback when the stage-specific jobs.production_operator column is still empty.
+    production_operator: result.jobRow.production_operator || lastEntry?.operator_name || "",
+  } : null;
   const totalUsd = result ? result.jobAgg.entries.reduce((s, e) => s + (Number(e.production_usd) || 0), 0) : 0;
 
   async function confirmUpdate() {
@@ -1846,7 +1883,7 @@ function JobStatusSearch({ myJobs, jobs, profile, currency, onUpdateStatus, onFe
             {statusSavedMsg && <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 mt-2">{statusSavedMsg}</div>}
           </div>
 
-          <OperatorUpdateBlock jobRow={result.jobRow} onUpdateOperator={onUpdateOperator} canEdit={Boolean(canEditOperator)}
+          <OperatorUpdateBlock jobRow={displayJobRow} onUpdateOperator={onUpdateOperator} canEdit={Boolean(canEditOperator)}
             actingName={profile.supervisor_name || profile.email} statusSaving={statusSaving}
             onSaved={(patch) => setResult((r) => ({ ...r, jobRow: { ...r.jobRow, ...patch } }))} />
 
@@ -2108,7 +2145,7 @@ function AdminDailyPlanView({ planEntries, loading, saving, error, savedMsg, onS
       current_status: statusRow?.current_status || "Planned",
       status_updated_at: statusRow?.status_updated_at || null,
       status_updated_by_name: statusRow?.status_updated_by_name || null,
-      production_operator: statusRow?.production_operator || null,
+      production_operator: statusRow?.production_operator || j.entries.slice().sort((a, b) => String(b.plan_date).localeCompare(String(a.plan_date)))[0]?.operator_name || null,
       printing_operator: statusRow?.printing_operator || null,
       cutting_operator: statusRow?.cutting_operator || null,
       qc_operator: statusRow?.qc_operator || null,
