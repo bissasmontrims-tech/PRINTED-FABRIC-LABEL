@@ -1703,70 +1703,64 @@ function StatusHistoryList({ history }) {
 // already limited to their own rows — this is a UX convenience on top of
 // that, not the actual security boundary.
 function OperatorUpdateBlock({ jobRow, onUpdateOperator, canEdit, actingName, statusSaving, onSaved }) {
-  const [names, setNames] = useState({
-    production: jobRow.production_operator || "",
-    printing: jobRow.printing_operator || "",
-    cutting: jobRow.cutting_operator || "",
-    qc: jobRow.qc_operator || "",
-  });
+  // Production Operator comes directly from the Daily Plan entry submitted by
+  // the Supervisor. It is DISPLAY ONLY here. The only operator that should be
+  // manually changed from Job Status is the Cutting Operator when the job
+  // reaches the Cutting stage.
+  const [cuttingName, setCuttingName] = useState(jobRow.cutting_operator || "");
 
   useEffect(() => {
-    setNames({
-      production: jobRow.production_operator || "",
-      printing: jobRow.printing_operator || "",
-      cutting: jobRow.cutting_operator || "",
-      qc: jobRow.qc_operator || "",
-    });
-  }, [jobRow.job_no, jobRow.production_operator, jobRow.printing_operator, jobRow.cutting_operator, jobRow.qc_operator]);
+    setCuttingName(jobRow.cutting_operator || "");
+  }, [jobRow.job_no, jobRow.cutting_operator]);
 
-  const stageEditable = {
-    production: ["Production Running", "Printing Complete", "Cutting Running", "Cutting Complete", "Handover to QC"],
-    printing: ["Printing Complete", "Cutting Running", "Cutting Complete", "Handover to QC"],
-    cutting: CUTTING_OPERATOR_STATUSES,
-    qc: ["Handover to QC"],
-  };
+  const canUpdateCutting = CUTTING_OPERATOR_STATUSES.includes(jobRow.current_status);
 
-  async function saveStage(stageKey) {
-    const name = names[stageKey].trim();
-    if (!name) return;
-    const ok = await onUpdateOperator(jobRow.job_no, stageKey, name, actingName);
-    if (ok && onSaved) onSaved({ [OPERATOR_STAGE_FIELDS[stageKey]]: name });
+  async function saveCuttingOperator() {
+    const name = cuttingName.trim();
+    if (!name || !canUpdateCutting) return;
+    const ok = await onUpdateOperator(jobRow.job_no, "cutting", name, actingName);
+    if (ok && onSaved) onSaved({ cutting_operator: name });
   }
 
   return (
     <div className="pt-3 border-t border-slate-200 mt-3">
       <div className="text-sm font-semibold text-slate-700 mb-2">Operator Names</div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm mb-3">
-        {Object.entries(OPERATOR_STAGE_LABELS).map(([key, label]) => (
-          <div key={key}>
-            <span className="text-slate-400 block text-xs">{label}</span>
-            {names[key] || "—"}
-          </div>
-        ))}
+      <div className="grid grid-cols-2 gap-4 text-sm">
+        <div>
+          <span className="text-slate-400 block text-xs">Production Operator</span>
+          <span>{jobRow.production_operator || "—"}</span>
+        </div>
+        <div>
+          <span className="text-slate-400 block text-xs">Cutting Operator</span>
+          <span>{jobRow.cutting_operator || "—"}</span>
+        </div>
       </div>
 
-      {canEdit && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {Object.entries(OPERATOR_STAGE_LABELS).map(([key, label]) => {
-            const allowed = stageEditable[key].includes(jobRow.current_status);
-            if (!allowed) return null;
-            return (
-              <div key={key} className="flex gap-2 items-center flex-wrap">
-                <input type="text" value={names[key]} onChange={(e) => setNames((n) => ({ ...n, [key]: e.target.value }))}
-                  placeholder={`Enter ${label} Name`}
-                  className="text-sm border border-slate-300 rounded-lg px-3 py-2 flex-1 min-w-[180px] focus:outline-none focus:ring-2 focus:ring-blue-200" />
-                <button onClick={() => saveStage(key)} disabled={!names[key].trim() || statusSaving}
-                  className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-semibold hover:bg-slate-900 disabled:opacity-50">
-                  Update {label}
-                </button>
-              </div>
-            );
-          })}
+      {canEdit && canUpdateCutting && (
+        <div className="mt-3 flex gap-2 items-center flex-wrap">
+          <input
+            type="text"
+            value={cuttingName}
+            onChange={(e) => setCuttingName(e.target.value)}
+            placeholder="Enter Cutting Operator Name"
+            className="text-sm border border-slate-300 rounded-lg px-3 py-2 flex-1 min-w-[220px] focus:outline-none focus:ring-2 focus:ring-blue-200"
+          />
+          <button
+            onClick={saveCuttingOperator}
+            disabled={!cuttingName.trim() || statusSaving}
+            className="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-semibold hover:bg-slate-900 disabled:opacity-50"
+          >
+            {statusSaving ? "Updating..." : "Update Cutting Operator"}
+          </button>
         </div>
       )}
 
+      {canEdit && !canUpdateCutting && (
+        <p className="text-xs text-slate-400 mt-2">Cutting Operator can be updated when the job reaches Cutting Running, Cutting Complete, or Handover to QC.</p>
+      )}
+
       {!canEdit && (
-        <p className="text-xs text-slate-400">Operator names are view-only for Managers. Supervisors can update the applicable stage operator name.</p>
+        <p className="text-xs text-slate-400 mt-2">Operator information is view-only for Managers.</p>
       )}
     </div>
   );
