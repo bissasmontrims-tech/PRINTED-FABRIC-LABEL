@@ -431,7 +431,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   const [navOpen, setNavOpen] = useState(false);
 
   const [settings, setSettings] = useState({
-    dailyTarget: 28000,  // requirement #9 — global daily production target (USD)
+    dailyTarget: 28000,  // FIXED daily production target (USD)
     belowTarget: 400,    // original per-operator/day threshold — preserved
     nearTargetPct: 90,
     dhuWarn: 2,
@@ -824,7 +824,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     const coreAgg = aggregate(coreScopedData);
     const days = new Set(filteredData.map((r) => r.date)).size || 1;
     const coreOperatorDayPairs = new Set(coreScopedData.map((r) => r.operator + "|" + r.date)).size;
-    const totalTarget = coreOperatorDayPairs * settings.belowTarget;
+    const totalTarget = settings.dailyTarget;
     const operators = new Set(filteredData.map((r) => r.operator)).size;
     const jobs = new Set(filteredData.map((r) => r.jobNumber)).size;
     const machines = new Set(filteredData.map((r) => r.machine)).size;
@@ -2926,12 +2926,12 @@ function ImportPage({ handleFile, importSummary, fileInputRef, rawData, previewR
 /* ============================== PAGE: SETTINGS ============================== */
 function SettingsPage({ settings, setSettings, canEdit }) {
   const [local, setLocal] = useState(settings);
-  const save = () => setSettings(local);
-  const field = (label, key, step = 1, suffix = "") => (
+  const save = () => setSettings({ ...local, dailyTarget: 28000 });
+  const field = (label, key, step = 1, suffix = "", fixed = false) => (
     <div className="flex items-center justify-between py-3 border-b border-slate-100">
       <span className="text-sm text-slate-600">{label}</span>
       <div className="flex items-center gap-1">
-        <input type="number" step={step} value={local[key]} disabled={!canEdit} onChange={(e) => setLocal((s) => ({ ...s, [key]: Number(e.target.value) }))}
+        <input type="number" step={step} value={fixed ? 28000 : local[key]} disabled={fixed || !canEdit} onChange={(e) => setLocal((s) => ({ ...s, [key]: Number(e.target.value) }))}
           className="w-28 text-sm border border-slate-200 rounded-lg px-2 py-1.5 text-right disabled:bg-slate-50 disabled:text-slate-400" />
         <span className="text-xs text-slate-400 w-8">{suffix}</span>
       </div>
@@ -2945,7 +2945,7 @@ function SettingsPage({ settings, setSettings, canEdit }) {
         </div>
       )}
       <SectionTitle>Dashboard Settings</SectionTitle>
-      {field("Daily Production Target (global, all operators)", "dailyTarget", 500, "$")}
+      {field("Daily Production Target (fixed)", "dailyTarget", 500, "$", true)}
       {field("Below-Target Threshold (per operator/day)", "belowTarget", 10, "$")}
       {field("\"Near Target\" band (% of threshold)", "nearTargetPct", 1, "%")}
       {field("DHU Warning Threshold", "dhuWarn", 0.1, "%")}
