@@ -381,6 +381,43 @@ function recordToDbRow(rec, userId) {
   };
 }
 
+
+/* ============================== PFL TREE BRAND ============================== */
+function PFLTreeLogo() {
+  const leaves = [
+    ["leaf-1", 49, 18, -18], ["leaf-2", 39, 25, -42], ["leaf-3", 59, 25, 38],
+    ["leaf-4", 31, 36, -55], ["leaf-5", 49, 34, 5], ["leaf-6", 67, 36, 55],
+    ["leaf-7", 27, 49, -65], ["leaf-8", 43, 46, -18], ["leaf-9", 58, 47, 25],
+    ["leaf-10", 73, 49, 65], ["leaf-11", 35, 58, -35], ["leaf-12", 53, 58, 15],
+    ["leaf-13", 67, 60, 45],
+  ];
+  return (
+    <div className="pfl-tree-logo" aria-label="PFL tree logo">
+      <svg viewBox="0 0 100 100" role="img">
+        <defs>
+          <linearGradient id="pflTrunkGradient" x1="0" x2="1" y1="0" y2="1">
+            <stop offset="0" stopColor="#6b3f24" />
+            <stop offset=".55" stopColor="#8b542d" />
+            <stop offset="1" stopColor="#4d2c1c" />
+          </linearGradient>
+          <linearGradient id="pflLeafGradient" x1="0" x2="1" y1="0" y2="1">
+            <stop offset="0" stopColor="#39c86b" />
+            <stop offset=".55" stopColor="#159447" />
+            <stop offset="1" stopColor="#0b6b35" />
+          </linearGradient>
+        </defs>
+        <g className="pfl-tree-grow">
+          <path className="pfl-tree-trunk" d="M48 91 C45 76 47 63 43 51 C40 43 34 38 29 34 M48 68 C53 57 60 49 69 43 M47 57 C43 48 42 42 44 35" fill="none" stroke="url(#pflTrunkGradient)" strokeWidth="7" strokeLinecap="round"/>
+          <path d="M47 91 C57 91 65 91 74 91" fill="none" stroke="#4d2c1c" strokeWidth="3" strokeLinecap="round"/>
+          {leaves.map(([id, cx, cy, rot], i) => (
+            <ellipse key={id} className="pfl-tree-leaf" style={{"--leaf-delay": `${0.68 + i * 0.105}s`}} cx={cx} cy={cy} rx="10" ry="6.5" transform={`rotate(${rot} ${cx} ${cy})`} fill="url(#pflLeafGradient)"/>
+          ))}
+        </g>
+      </svg>
+    </div>
+  );
+}
+
 /* ============================== MAIN APP ============================== */
 export default function PFLDashboard({ session, profile, onLogout }) {
   // Database is the source of truth. RAW_DATA (the originally embedded
@@ -1112,9 +1149,14 @@ export default function PFLDashboard({ session, profile, onLogout }) {
     <div className="min-h-screen bg-slate-50 text-slate-800 flex" style={{ fontFamily: "Inter, ui-sans-serif, system-ui" }}>
       {/* Sidebar */}
       <aside className={`fixed lg:static z-30 inset-y-0 left-0 w-64 bg-white border-r border-slate-200 flex flex-col transition-transform ${navOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0`}>
-        <div className="px-5 py-4 border-b border-slate-200">
-          <div className="text-lg font-bold text-slate-900 leading-tight">PFL Production</div>
-          <div className="text-xs text-slate-400">Operator Performance Dashboard</div>
+        <div className="px-5 py-3 border-b border-slate-200 pfl-brand-header">
+          <div className="flex items-center gap-3">
+            <PFLTreeLogo />
+            <div>
+              <div className="text-lg font-bold text-slate-900 leading-tight">PFL Production</div>
+              <div className="text-xs text-slate-400">Operator Performance Dashboard</div>
+            </div>
+          </div>
         </div>
         <nav className="flex-1 overflow-y-auto py-2">
           {NAV.filter((n) => !n.permission || can(profile, n.permission)).map((n) => {

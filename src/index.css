@@ -69,3 +69,31 @@ body{margin:0;}
 /* Manager presentation polish: keep chart numbers readable and never rotate USD labels. */
 .recharts-label { font-variant-numeric: tabular-nums; }
 .recharts-cartesian-axis-tick-value { font-variant-numeric: tabular-nums; }
+
+
+/* =========================================================
+   PFL TREE BRAND ANIMATION
+   Tree grows from small to full size, then leaves appear
+   one-by-one. Runs once when the dashboard mounts.
+   ========================================================= */
+.pfl-brand-header{min-height:82px;display:flex;align-items:center;}
+.pfl-tree-logo{width:50px;height:62px;flex:0 0 50px;display:flex;align-items:flex-end;justify-content:center;overflow:visible;}
+.pfl-tree-logo svg{width:50px;height:62px;overflow:visible;}
+.pfl-tree-grow{transform-box:fill-box;transform-origin:50% 100%;animation:pflTreeGrow 1.25s cubic-bezier(.2,.82,.2,1) both;}
+.pfl-tree-trunk{filter:drop-shadow(0 1px 1px rgba(0,0,0,.12));}
+.pfl-tree-leaf{opacity:0;transform-box:fill-box;transform-origin:center;animation:pflLeafAppear .48s cubic-bezier(.2,.9,.25,1) var(--leaf-delay) forwards;}
+@keyframes pflTreeGrow{
+  0%{opacity:.35;transform:scale(.14,.12);}
+  55%{opacity:1;transform:scale(.82,.78);}
+  78%{transform:scale(1.06,1.04);}
+  100%{opacity:1;transform:scale(1,1);}
+}
+@keyframes pflLeafAppear{
+  0%{opacity:0;transform:scale(.05) rotate(-8deg);}
+  60%{opacity:1;transform:scale(1.12) rotate(2deg);}
+  100%{opacity:1;transform:scale(1) rotate(0);}
+}
+@media(prefers-reduced-motion:reduce){
+  .pfl-tree-grow{animation:none;}
+  .pfl-tree-leaf{opacity:1;animation:none;}
+}
