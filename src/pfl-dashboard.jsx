@@ -52,7 +52,7 @@ const SUPERVISORS = ["Aslam", "Murad", "Biplob", "Selim Reza", "Shahjahan"];
 // those specific widgets. The rest of the app (Operator Performance page,
 // Machine/MC Type/Data Table pages, "Operator Below 50,000 PCS") is
 // unaffected and still covers every MC type.
-const CORE_MC_TYPES = ["Flexo", "Nylo", "Auto Screen"];
+const CORE_MC_TYPES = ["Flexo", "Nylo", "Auto-Screen", "Auto Screen"];
 // Job workflow stages, in required order — a normal Supervisor may only
 // advance to the next stage, never jump ahead or backward (Admin can
 // correct to any stage). "Completed" is a separate, PRODUCTION-quantity
