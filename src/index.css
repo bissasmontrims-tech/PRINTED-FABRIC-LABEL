@@ -97,3 +97,29 @@ body{margin:0;}
   .pfl-tree-grow{animation:none;}
   .pfl-tree-leaf{opacity:1;animation:none;}
 }
+
+/* =========================================================
+   Horizontal chart scrolling — Daily / Monthly / Yearly
+   Daily charts keep every date/value available without
+   squeezing or overlapping labels. Scroll left/right on
+   the chart area when there are many dates.
+   ========================================================= */
+.pfl-chart-scroll{
+  width:100%;
+  max-width:100%;
+  overflow-x:auto;
+  overflow-y:hidden;
+  overscroll-behavior-x:contain;
+  scrollbar-width:thin;
+  scrollbar-gutter:stable;
+  padding-bottom:6px;
+  -webkit-overflow-scrolling:touch;
+}
+.pfl-chart-scroll > div{max-width:none;}
+.pfl-chart-scroll::-webkit-scrollbar{height:8px;}
+.pfl-chart-scroll::-webkit-scrollbar-track{background:#eef2f7;border-radius:999px;}
+.pfl-chart-scroll::-webkit-scrollbar-thumb{background:#94a3b8;border-radius:999px;}
+.pfl-chart-scroll::-webkit-scrollbar-thumb:hover{background:#64748b;}
+@media(max-width:900px){
+  .pfl-chart-scroll{margin-right:-2px;}
+}

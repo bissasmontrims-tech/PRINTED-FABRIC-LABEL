@@ -292,13 +292,21 @@ function DataTable({ columns, rows, pageSize = 12, initialSort }) {
   );
 }
 
-function ChartCard({ title, children, height = 260 }) {
+function ChartCard({ title, children, height = 260, scroll = false, minWidth = 0 }) {
   return (
     <Card>
       <div className="text-sm font-semibold text-slate-700 mb-3">{title}</div>
-      <div style={{ width: "100%", height }}>
-        <ResponsiveContainer>{children}</ResponsiveContainer>
-      </div>
+      {scroll ? (
+        <div className="pfl-chart-scroll" aria-label={`${title} horizontal scroll`}>
+          <div style={{ width: minWidth || "100%", minWidth: minWidth || "100%", height }}>
+            <ResponsiveContainer>{children}</ResponsiveContainer>
+          </div>
+        </div>
+      ) : (
+        <div style={{ width: "100%", height }}>
+          <ResponsiveContainer>{children}</ResponsiveContainer>
+        </div>
+      )}
     </Card>
   );
 }
@@ -1436,7 +1444,7 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
         <KpiCard label="Achievement %" value={fmtPct(series.reduce((s, r) => s + r.usd, 0) / (series.reduce((s, r) => s + r.target, 0) || 1) * 100)} />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ChartCard title={`${tab[0].toUpperCase() + tab.slice(1)} PCS Trend`}>
+        <ChartCard title={`${tab[0].toUpperCase() + tab.slice(1)} PCS Trend`} scroll={tab === "daily"} minWidth={tab === "daily" ? Math.max(760, series.length * 78) : 0}>
           {series.length ? (
             <AreaChart data={series} margin={{ top: 40, right: 18, left: 8, bottom: 18 }}>
               <defs>
@@ -1448,11 +1456,11 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis
                 dataKey={xKey}
-                interval={tab === "daily" && series.length > 10 ? Math.ceil(series.length / 10) - 1 : 0}
-                angle={tab === "daily" ? -35 : 0}
-                textAnchor={tab === "daily" ? "end" : "middle"}
-                height={tab === "daily" ? 58 : 32}
-                tickMargin={tab === "daily" ? 12 : 8}
+                interval={tab === "daily" ? 0 : 0}
+                angle={0}
+                textAnchor="middle"
+                height={tab === "daily" ? 34 : 32}
+                tickMargin={tab === "daily" ? 8 : 8}
                 tick={{ fontSize: 10, fill: MUTE }}
                 tickFormatter={(v) => tab === "daily" ? v : v}
               />
@@ -1479,17 +1487,17 @@ function DailyPage({ dailySeries, monthlySeries, yearlySeries, operatorRows, set
             </AreaChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
-        <ChartCard title={`${tab[0].toUpperCase() + tab.slice(1)} Target vs Actual`}>
+        <ChartCard title={`${tab[0].toUpperCase() + tab.slice(1)} Target vs Actual`} scroll={tab === "daily"} minWidth={tab === "daily" ? Math.max(760, series.length * 92) : 0}>
           {series.length ? (
             <BarChart data={series} margin={{ top: 34, right: 28, left: 8, bottom: 18 }} barGap={8} barCategoryGap="18%">
               <CartesianGrid stroke={LINE} vertical={false} />
               <XAxis
                 dataKey={xKey}
-                interval={tab === "daily" && series.length > 10 ? Math.ceil(series.length / 10) - 1 : 0}
-                angle={tab === "daily" ? -35 : 0}
-                textAnchor={tab === "daily" ? "end" : "middle"}
-                height={tab === "daily" ? 58 : 32}
-                tickMargin={tab === "daily" ? 12 : 8}
+                interval={tab === "daily" ? 0 : 0}
+                angle={0}
+                textAnchor="middle"
+                height={tab === "daily" ? 34 : 32}
+                tickMargin={tab === "daily" ? 8 : 8}
                 tick={{ fontSize: 10, fill: MUTE }}
               />
               <YAxis tick={{ fontSize: 11, fill: MUTE }} />
