@@ -1365,28 +1365,46 @@ function OverviewPage({ kpi, settings, alerts, operatorRows, below50kPcsOps, bel
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ChartCard title="Daily USD Trend">
+        <ChartCard
+          title="Daily USD Trend"
+          scroll={dailySeries.length > 6}
+          minWidth={dailySeries.length > 6 ? Math.max(820, dailySeries.length * 92) : 0}
+          height={285}
+        >
           {dailySeries.length ? (
-            <LineChart data={dailySeries}>
+            <LineChart data={dailySeries} margin={{ top: 34, right: 24, left: 8, bottom: 24 }}>
               <CartesianGrid stroke={LINE} vertical={false} />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(d) => d.slice(5)} />
+              <XAxis
+                dataKey="date"
+                interval={0}
+                tick={{ fontSize: 10 }}
+                tickMargin={8}
+                height={34}
+                tickFormatter={(d) => d.slice(5)}
+              />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip formatter={(v) => fmtUsd(v)} labelFormatter={fmtDate} />
-              <Line type="monotone" dataKey="usd" name="Actual USD" stroke={COLORS[0]} strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="target" name="Target USD" stroke={COLORS[4]} strokeWidth={2} strokeDasharray="4 3" dot={false} />
+              <Legend />
+              <Line type="monotone" dataKey="usd" name="Actual USD" stroke={COLORS[0]} strokeWidth={2.5} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="target" name="Target USD" stroke={COLORS[4]} strokeWidth={2} strokeDasharray="5 4" dot={{ r: 2 }} />
             </LineChart>
           ) : <EmptyState text="No data" />}
         </ChartCard>
-        <ChartCard title="Production USD by MC Type">
+        <ChartCard
+          title="Production USD by MC Type"
+          scroll={mcTypeRows.length > 3}
+          minWidth={mcTypeRows.length > 3 ? Math.max(620, mcTypeRows.length * 150) : 0}
+          height={285}
+        >
           {mcTypeRows.length ? (
-            <BarChart data={mcTypeRows}>
+            <BarChart data={mcTypeRows} margin={{ top: 48, right: 24, left: 8, bottom: 24 }} barCategoryGap="22%">
               <CartesianGrid stroke={LINE} vertical={false} />
-              <XAxis dataKey="mcType" tick={{ fontSize: 11 }} />
+              <XAxis dataKey="mcType" interval={0} tick={{ fontSize: 11 }} tickMargin={8} height={34} />
               <YAxis tick={{ fontSize: 11 }} />
               <Tooltip formatter={(v) => fmtUsd(v)} />
               <Bar dataKey="usd" name="USD" radius={[4, 4, 0, 0]}>
                 {mcTypeRows.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                <LabelList dataKey="usd" position="top" formatter={(v) => fmtUsd(v)} style={{ fontSize: 11, fill: INK }} />
+                <LabelList dataKey="usd" position="top" offset={10} formatter={(v) => fmtUsd(v)} style={{ fontSize: 10, fontWeight: 700, fill: INK }} />
               </Bar>
             </BarChart>
           ) : <EmptyState text="No data" />}
