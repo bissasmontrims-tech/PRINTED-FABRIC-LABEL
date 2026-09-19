@@ -99,6 +99,16 @@ body{margin:0;}
 }
 
 /* =========================================================
+   Fixed desktop sidebar
+   The left navigation stays locked while the dashboard content scrolls.
+   Its own menu area can scroll independently if the menu is taller than the viewport.
+   ========================================================= */
+@media(min-width:1024px){
+  .pfl-fixed-sidebar{position:fixed!important;left:0;top:0;bottom:0;height:100vh;z-index:30;}
+  .pfl-main-content{margin-left:16rem;}
+}
+
+/* =========================================================
    Horizontal chart scrolling — Daily / Monthly / Yearly
    Daily charts keep every date/value available without
    squeezing or overlapping labels. Scroll left/right on

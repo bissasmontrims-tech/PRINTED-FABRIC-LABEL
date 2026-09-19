@@ -1156,7 +1156,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex" style={{ fontFamily: "Inter, ui-sans-serif, system-ui" }}>
       {/* Sidebar */}
-      <aside className={`fixed lg:static z-30 inset-y-0 left-0 w-64 bg-white border-r border-slate-200 flex flex-col transition-transform ${navOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0`}>
+      <aside className={`pfl-fixed-sidebar fixed z-30 inset-y-0 left-0 w-64 h-screen bg-white border-r border-slate-200 flex flex-col transition-transform ${navOpen ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0`}>
         <div className="px-5 py-3 border-b border-slate-200 pfl-brand-header">
           <div className="flex items-center gap-3">
             <PFLTreeLogo />
@@ -1186,7 +1186,7 @@ export default function PFLDashboard({ session, profile, onLogout }) {
       {navOpen && <div className="fixed inset-0 bg-black/30 z-20 lg:hidden" onClick={() => setNavOpen(false)} />}
 
       {/* Main */}
-      <div className="flex-1 min-w-0 flex flex-col">
+      <div className="pfl-main-content flex-1 min-w-0 flex flex-col lg:ml-64">
         {/* Topbar */}
         <header className="bg-white border-b border-slate-200 px-4 lg:px-6 py-3 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-3">
